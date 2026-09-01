@@ -120,6 +120,32 @@ input,select{font-family:inherit}
 .act.del{flex:0 0 auto; padding:11px 14px; border-color:var(--line); color:var(--muted)}
 .act.del:hover{border-color:var(--stop-line); color:var(--stop)}
 
+/* selezione multipla */
+#selectToggle.on{background:var(--ink); color:#fff; border-color:var(--ink)}
+.bk .pick{display:none; width:22px; height:22px; border:2px solid var(--line); border-radius:50%; flex:0 0 auto; margin-top:4px; position:relative}
+.selecting .bk{cursor:pointer}
+.selecting .bk .pick{display:inline-block}
+.selecting .bk .actions{display:none}
+.bk.picked{outline:2px solid var(--spark); outline-offset:-2px}
+.bk.picked .pick{background:var(--spark); border-color:var(--spark)}
+.bk.picked .pick::after{content:"✓"; color:#fff; font-size:13px; font-weight:800; position:absolute; inset:0; display:grid; place-items:center}
+#bookingsList.selecting{padding-bottom:96px}
+#bulkBar{
+  position:fixed; left:0; right:0; bottom:0; z-index:40; display:none;
+  gap:8px; align-items:center; flex-wrap:wrap;
+  background:var(--card); border-top:1px solid var(--line);
+  padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+  box-shadow:0 -8px 24px -18px rgba(20,25,23,.45);
+}
+#bulkBar.show{display:flex}
+#bulkBar .count{font-weight:700; margin-right:auto; color:var(--muted)}
+.bulk-btn{padding:10px 14px; border-radius:10px; font-weight:600; font-size:14px; border:1px solid var(--line); background:var(--card); color:var(--ink)}
+.bulk-btn.confirm{background:var(--ok); border-color:var(--ok); color:#fff}
+.bulk-btn.cancel{border-color:var(--stop-line); color:var(--stop)}
+.bulk-btn.del{color:var(--muted)}
+.bulk-btn.del:hover{border-color:var(--stop-line); color:var(--stop)}
+.bulk-btn[disabled]{opacity:.45}
+
 /* ---- storico ---- */
 .hist{
   display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -214,8 +240,17 @@ input,select{font-family:inherit}
         <option value="confermata">Confermate</option>
         <option value="annullata">Annullate</option>
       </select>
+      <button class="chip" id="selectToggle" style="margin-left:auto">Seleziona</button>
     </div>
     <div id="bookingsList"><div class="loading">Carico…</div></div>
+    <div id="bulkBar">
+      <button class="bulk-btn" id="bulkAll">Seleziona tutte</button>
+      <span class="count" id="bulkCount">0 selezionate</span>
+      <button class="bulk-btn confirm" id="bulkConfirm">Conferma</button>
+      <button class="bulk-btn cancel" id="bulkCancel">Annulla</button>
+      <button class="bulk-btn del" id="bulkDelete">Elimina</button>
+      <button class="bulk-btn" id="bulkExit">Fine</button>
+    </div>
   </main>
 
   <!-- STORICO -->
@@ -271,6 +306,8 @@ let ME = null;            // { role, client_id }
 let CLIENT = null;        // riga clients dell'utente (per owner)
 let FILTER = { when:"all", date:"", status:"" };
 let ADMIN_CLIENT = null;   // se valorizzato, il super admin sta gestendo le prenotazioni di questo cliente
+let SELECT_MODE = false;   // modalità selezione multipla attiva
+const SELECTED = new Set();
 
 /* ---- utility ---- */
 const $ = s => document.querySelector(s);
@@ -354,6 +391,7 @@ function renderClientTag(){
    ===================================================================== */
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>switchTab(t.dataset.tab)));
 function switchTab(name){
+  if(SELECT_MODE) exitSelect();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
   ["bookings","history","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
   if(name==="bookings") loadBookings();
@@ -377,6 +415,7 @@ $("#dateFilter").addEventListener("change",e=>{
 $("#statusFilter").addEventListener("change",e=>{ FILTER.status=e.target.value; loadBookings(); });
 
 async function loadBookings(){
+  SELECTED.clear();
   const list=$("#bookingsList"); list.innerHTML='<div class="loading">Carico…</div>';
   let q = sb.from("bookings")
     .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,booking_types(label,key)")
@@ -411,11 +450,14 @@ function bookingCard(b){
   acts.push(`<a class="act wa" href="${waLink(b.customer_phone)}" target="_blank" rel="noopener" title="WhatsApp">WhatsApp</a>`);
   acts.push(`<button class="act del" data-del="${b.id}" title="Elimina definitivamente">Elimina</button>`);
   return `
-  <div class="bk">
+  <div class="bk" data-id="${b.id}">
     <div class="bk-top">
-      <div>
-        <div class="bk-time">${time}</div>
-        <div class="bk-name">${esc(b.customer_name)}</div>
+      <div style="display:flex; align-items:flex-start; gap:12px">
+        <span class="pick" aria-hidden="true"></span>
+        <div>
+          <div class="bk-time">${time}</div>
+          <div class="bk-name">${esc(b.customer_name)}</div>
+        </div>
       </div>
       <span class="status ${b.status}">${STATUS_LABEL[b.status]}</span>
     </div>
@@ -430,6 +472,13 @@ function bookingCard(b){
 }
 
 $("#bookingsList").addEventListener("click", async e=>{
+  if(SELECT_MODE){
+    const card=e.target.closest(".bk"); if(!card) return;
+    const id=card.dataset.id;
+    if(SELECTED.has(id)){ SELECTED.delete(id); card.classList.remove("picked"); }
+    else { SELECTED.add(id); card.classList.add("picked"); }
+    updateBulkBar(); return;
+  }
   const del=e.target.closest("[data-del]");
   if(del){
     if(!confirm("Eliminare definitivamente questa prenotazione?\nL'azione non è reversibile.")) return;
@@ -445,6 +494,59 @@ $("#bookingsList").addEventListener("click", async e=>{
   toast(btn.dataset.act==="confermata"?"Prenotazione confermata":btn.dataset.act==="annullata"?"Prenotazione annullata":"Riaperta");
   loadBookings();
 });
+
+/* ---- selezione multipla ---- */
+$("#selectToggle").addEventListener("click", ()=> SELECT_MODE ? exitSelect() : enterSelect());
+$("#bulkAll").addEventListener("click", toggleSelectAll);
+$("#bulkExit").addEventListener("click", exitSelect);
+$("#bulkConfirm").addEventListener("click", ()=>bulkApply("confermata"));
+$("#bulkCancel").addEventListener("click", ()=>bulkApply("annullata"));
+$("#bulkDelete").addEventListener("click", ()=>bulkApply("delete"));
+
+function enterSelect(){
+  SELECT_MODE=true; SELECTED.clear();
+  $("#bookingsList").classList.add("selecting");
+  $("#bulkBar").classList.add("show");
+  $("#selectToggle").textContent="Fine"; $("#selectToggle").classList.add("on");
+  updateBulkBar();
+}
+function exitSelect(){
+  SELECT_MODE=false; SELECTED.clear();
+  $("#bookingsList").classList.remove("selecting");
+  $("#bulkBar").classList.remove("show");
+  $("#selectToggle").textContent="Seleziona"; $("#selectToggle").classList.remove("on");
+  $("#bookingsList").querySelectorAll(".bk.picked").forEach(c=>c.classList.remove("picked"));
+}
+function toggleSelectAll(){
+  const cards=[...$("#bookingsList").querySelectorAll(".bk")];
+  const allSel = cards.length>0 && SELECTED.size>=cards.length;
+  if(allSel){ SELECTED.clear(); cards.forEach(c=>c.classList.remove("picked")); }
+  else { cards.forEach(c=>{ SELECTED.add(c.dataset.id); c.classList.add("picked"); }); }
+  updateBulkBar();
+}
+function updateBulkBar(){
+  const n=SELECTED.size;
+  $("#bulkCount").textContent = n+" "+(n===1?"selezionata":"selezionate");
+  ["bulkConfirm","bulkCancel","bulkDelete"].forEach(id=>$("#"+id).disabled = n===0);
+  const total=$("#bookingsList").querySelectorAll(".bk").length;
+  $("#bulkAll").textContent = (n>0 && n>=total) ? "Deseleziona tutte" : "Seleziona tutte";
+}
+function setBulkDisabled(v){ ["bulkAll","bulkConfirm","bulkCancel","bulkDelete","bulkExit"].forEach(id=>$("#"+id).disabled=v); }
+
+async function bulkApply(action){
+  const ids=[...SELECTED]; if(!ids.length) return;
+  if(action==="delete" && !confirm(`Eliminare definitivamente ${ids.length} ${ids.length===1?"prenotazione":"prenotazioni"}?\nL'azione non è reversibile.`)) return;
+  setBulkDisabled(true);
+  let error;
+  if(action==="delete"){ ({ error } = await sb.from("bookings").delete().in("id", ids)); }
+  else { ({ error } = await sb.from("bookings").update({status:action}).in("id", ids)); }
+  setBulkDisabled(false);
+  if(error){ toast("Errore, riprova"); return; }
+  toast(action==="delete"?`${ids.length} eliminate`:action==="confermata"?`${ids.length} confermate`:`${ids.length} annullate`);
+  SELECTED.clear();
+  await loadBookings();
+  updateBulkBar();
+}
 
 /* =====================================================================
    STORICO CLIENTE FINALE
@@ -572,6 +674,7 @@ $("#adminList").addEventListener("click", async e=>{
 
 // Super admin: gestione prenotazioni di un singolo cliente
 function openClientBookings(id, name){
+  if(SELECT_MODE) exitSelect();
   ADMIN_CLIENT = { id, name };
   FILTER = { when:"all", date:"", status:"" };
   document.querySelectorAll('.chip[data-when]').forEach(x=>x.classList.toggle("on", x.dataset.when==="all"));
@@ -588,6 +691,7 @@ function openClientBookings(id, name){
   loadBookings();
 }
 function closeClientBookings(){
+  if(SELECT_MODE) exitSelect();
   ADMIN_CLIENT = null;
   const hdr=$("#adminBkHeader"); if(hdr) hdr.remove();
   $("#tab-bookings").classList.add("hide");
