@@ -268,6 +268,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let ME = null;            // { role, client_id }
 let CLIENT = null;        // riga clients dell'utente (per owner)
 let FILTER = { when:"all", date:"", status:"" };
+let ADMIN_CLIENT = null;   // se valorizzato, il super admin sta gestendo le prenotazioni di questo cliente
 
 /* ---- utility ---- */
 const $ = s => document.querySelector(s);
@@ -379,6 +380,7 @@ async function loadBookings(){
     .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,booking_types(label,key)")
     .order("booking_date",{ascending:true}).order("booking_time",{ascending:true,nullsFirst:true});
 
+  if(ADMIN_CLIENT) q=q.eq("client_id", ADMIN_CLIENT.id);
   if(FILTER.when==="today")    q=q.eq("booking_date",isoToday(0));
   else if(FILTER.when==="tomorrow") q=q.eq("booking_date",isoToday(1));
   else if(FILTER.when==="date" && FILTER.date) q=q.eq("booking_date",FILTER.date);
@@ -539,12 +541,15 @@ async function loadAdmin(){
   list.innerHTML = data.map(c=>`
     <div class="admin-row">
       <div><div class="a-name">${esc(c.name)}</div><div class="a-slug">${esc(c.slug)}</div></div>
-      <button class="toggle ${c.status}" data-id="${c.id}" data-status="${c.status}">
-        ${c.status==="attivo"?"Attivo":"Sospeso"}
-      </button>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end">
+        <button class="toggle ${c.status}" data-id="${c.id}" data-status="${c.status}">${c.status==="attivo"?"Attivo":"Sospeso"}</button>
+        <button class="chip" data-view="${c.id}" data-name="${esc(c.name)}">Vedi prenotazioni →</button>
+      </div>
     </div>`).join("");
 }
 $("#adminList").addEventListener("click", async e=>{
+  const view=e.target.closest("[data-view]");
+  if(view){ openClientBookings(view.dataset.view, view.dataset.name); return; }
   const btn=e.target.closest(".toggle"); if(!btn) return;
   const next = btn.dataset.status==="attivo" ? "sospeso" : "attivo";
   btn.disabled=true;
@@ -553,6 +558,31 @@ $("#adminList").addEventListener("click", async e=>{
   if(error){ toast("Errore: "+error.message); return; }
   toast(next==="attivo"?"Attività riattivata":"Attività sospesa"); loadAdmin();
 });
+
+// Super admin: gestione prenotazioni di un singolo cliente
+function openClientBookings(id, name){
+  ADMIN_CLIENT = { id, name };
+  FILTER = { when:"all", date:"", status:"" };
+  document.querySelectorAll('.chip[data-when]').forEach(x=>x.classList.toggle("on", x.dataset.when==="all"));
+  const df=$("#dateFilter"); if(df) df.value="";
+  const sf=$("#statusFilter"); if(sf) sf.value="";
+  const wrap=$("#tab-bookings");
+  let hdr=$("#adminBkHeader");
+  if(!hdr){ hdr=document.createElement("div"); hdr.id="adminBkHeader"; wrap.insertBefore(hdr, wrap.firstChild); }
+  hdr.innerHTML=`<button class="chip" id="adminBkBack" style="margin-bottom:12px">← Torna ai clienti</button>
+                 <h3 style="margin:0 0 14px; font-size:16px">${esc(name)}</h3>`;
+  $("#adminBkBack").addEventListener("click", closeClientBookings);
+  $("#tab-admin").classList.add("hide");
+  $("#tab-bookings").classList.remove("hide");
+  loadBookings();
+}
+function closeClientBookings(){
+  ADMIN_CLIENT = null;
+  const hdr=$("#adminBkHeader"); if(hdr) hdr.remove();
+  $("#tab-bookings").classList.add("hide");
+  $("#tab-admin").classList.remove("hide");
+  loadAdmin();
+}
 
 /* =====================================================================
    AVVIO
