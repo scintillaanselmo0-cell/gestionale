@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Scintilla — Gestionale</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+/* =======================================================================
+   SCINTILLA — identità del pannello (uguale per TUTTI i clienti).
+   Palette neutra fredda + un solo accento: la "scintilla" ambra.
+   Le azioni usano colori semantici, non l'accento, per restare calme.
+   ===================================================================== */
+:root{
+  --paper:#F4F5F3;   --card:#FFFFFF;   --ink:#191C1B;   --muted:#6B7370;
+  --line:#E4E7E3;    --line-soft:#EEF0ED;
+  --spark:#E0A100;                 /* accento brand (scintilla) */
+  --ok:#1F7A5A;   --ok-bg:#E6F1EC;   --ok-line:#BFE0D2;
+  --warn:#9A6A12; --warn-bg:#F7EFDC; --warn-line:#EAD8A6;
+  --stop:#A23B2B; --stop-bg:#F6E7E3; --stop-line:#E7C7BF;
+  --r:14px; --r-sm:10px;
+  --sh:0 1px 2px rgba(20,25,23,.05), 0 8px 24px -18px rgba(20,25,23,.35);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  background:var(--paper); color:var(--ink);
+  -webkit-font-smoothing:antialiased; line-height:1.45;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+button{font-family:inherit; cursor:pointer}
+input,select{font-family:inherit}
+.hide{display:none !important}
+
+/* ---- wordmark ---- */
+.brand{display:flex; align-items:center; gap:8px; font-weight:800; letter-spacing:-.02em; font-size:19px}
+.brand .spark{width:11px; height:11px; transform:rotate(45deg); background:var(--spark); border-radius:2px; box-shadow:0 0 0 3px rgba(224,161,0,.18)}
+.brand small{font-weight:600; color:var(--muted); letter-spacing:0; font-size:12px; margin-left:2px}
+
+/* ==================== LOGIN ==================== */
+.login-wrap{min-height:100dvh; display:grid; place-items:center; padding:24px}
+.login{width:100%; max-width:380px}
+.login .brand{justify-content:center; font-size:24px; margin-bottom:6px}
+.login .tag{text-align:center; color:var(--muted); font-size:14px; margin-bottom:28px}
+.field{margin-bottom:14px}
+.field label{display:block; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px}
+.input{
+  width:100%; padding:13px 14px; font-size:16px; color:var(--ink);
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r-sm);
+  outline:none; transition:border-color .15s, box-shadow .15s;
+}
+.input:focus{border-color:var(--spark); box-shadow:0 0 0 3px rgba(224,161,0,.16)}
+.btn{
+  width:100%; padding:14px; font-size:15px; font-weight:600; border-radius:var(--r-sm);
+  border:1px solid var(--ink); background:var(--ink); color:#fff; transition:opacity .15s;
+}
+.btn:hover{opacity:.9}
+.btn[disabled]{opacity:.5; cursor:default}
+.msg{margin-top:14px; font-size:14px; padding:11px 13px; border-radius:var(--r-sm); display:none}
+.msg.err{display:block; background:var(--stop-bg); color:var(--stop); border:1px solid var(--stop-line)}
+.msg.info{display:block; background:var(--ok-bg); color:var(--ok); border:1px solid var(--ok-line)}
+
+/* ==================== APP ==================== */
+.topbar{
+  position:sticky; top:0; z-index:20; background:rgba(244,245,243,.86);
+  backdrop-filter:saturate(1.4) blur(8px); border-bottom:1px solid var(--line);
+  padding:calc(12px + env(safe-area-inset-top)) 16px 12px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.client-tag{display:flex; align-items:center; gap:9px; min-width:0}
+.client-tag img{height:30px; width:auto; max-width:130px; object-fit:contain; border-radius:6px}
+.client-tag .name{font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.icon-btn{border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:9px; padding:8px 11px; font-size:13px; font-weight:600}
+
+.tabs{display:flex; gap:4px; padding:10px 12px 0; max-width:760px; margin:0 auto; overflow-x:auto}
+.tab{
+  border:0; background:transparent; color:var(--muted); font-weight:600; font-size:14px;
+  padding:9px 12px 12px; border-bottom:2px solid transparent; white-space:nowrap;
+}
+.tab.on{color:var(--ink); border-color:var(--spark)}
+
+.wrap{max-width:760px; margin:0 auto; padding:14px 12px 40px}
+
+/* ---- filtri prenotazioni ---- */
+.filters{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px}
+.chip{border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:999px; padding:7px 13px; font-size:13px; font-weight:600}
+.chip.on{background:var(--ink); color:#fff; border-color:var(--ink)}
+.sel, .date{
+  padding:9px 11px; font-size:14px; border:1px solid var(--line); border-radius:9px;
+  background:var(--card); color:var(--ink); outline:none;
+}
+.sel:focus,.date:focus{border-color:var(--spark)}
+
+/* ---- lista prenotazioni ---- */
+.daygroup{margin-bottom:22px}
+.dayhead{font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:0 2px 9px}
+.bk{
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r);
+  padding:14px; margin-bottom:10px; box-shadow:var(--sh);
+}
+.bk-top{display:flex; align-items:baseline; justify-content:space-between; gap:12px}
+.bk-time{font-size:22px; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
+.bk-time .notime{font-size:15px; font-weight:600; color:var(--muted)}
+.bk-name{font-weight:700; font-size:16px; margin:2px 0 0}
+.bk-meta{display:flex; flex-wrap:wrap; gap:6px 14px; color:var(--muted); font-size:13.5px; margin-top:6px}
+.bk-meta b{color:var(--ink); font-weight:600}
+.status{font-size:12px; font-weight:700; padding:5px 10px; border-radius:999px; white-space:nowrap}
+.status.in_attesa{background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn-line)}
+.status.confermata{background:var(--ok-bg); color:var(--ok); border:1px solid var(--ok-line)}
+.status.annullata{background:var(--stop-bg); color:var(--stop); border:1px solid var(--stop-line)}
+.actions{display:flex; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line-soft)}
+.act{flex:1; padding:11px; font-size:14px; font-weight:600; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink)}
+.act.confirm{background:var(--ok); border-color:var(--ok); color:#fff}
+.act.cancel{background:var(--card); border-color:var(--stop-line); color:var(--stop)}
+.act.reopen{color:var(--muted)}
+.act.wa{flex:0 0 auto; padding:11px 14px; border-color:var(--line); color:var(--ok)}
+
+/* ---- storico ---- */
+.hist{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r);
+  padding:13px 14px; margin-bottom:9px; box-shadow:var(--sh);
+}
+.hist .who{min-width:0}
+.hist .who b{font-weight:700; font-size:15px}
+.hist .who div{color:var(--muted); font-size:13px; margin-top:2px}
+.visits{text-align:right; white-space:nowrap}
+.visits .n{font-size:20px; font-weight:800; color:var(--spark); line-height:1}
+.visits .l{font-size:11px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.05em}
+
+/* ---- impostazioni ---- */
+.card{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:18px; box-shadow:var(--sh); margin-bottom:14px}
+.card h3{margin:0 0 4px; font-size:15px}
+.card p{margin:0 0 14px; color:var(--muted); font-size:13.5px}
+.logo-preview{display:flex; align-items:center; gap:14px; margin-bottom:14px}
+.logo-preview img{height:56px; max-width:180px; object-fit:contain; background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:8px}
+.logo-fallback{height:56px; display:grid; place-items:center; padding:0 16px; background:var(--paper); border:1px dashed var(--line); border-radius:10px; color:var(--muted); font-weight:700}
+.swatch{display:inline-flex; align-items:center; gap:7px; font-size:13px; color:var(--muted); margin-right:14px}
+.swatch i{width:16px; height:16px; border-radius:5px; border:1px solid rgba(0,0,0,.1)}
+.file-btn{display:inline-block; padding:11px 16px; border:1px solid var(--ink); border-radius:10px; font-weight:600; font-size:14px}
+.file-btn input{display:none}
+
+/* ---- super admin ---- */
+.admin-row{display:flex; align-items:center; justify-content:space-between; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:13px 14px; margin-bottom:9px; box-shadow:var(--sh)}
+.admin-row .a-name{font-weight:700}
+.admin-row .a-slug{color:var(--muted); font-size:12.5px; margin-top:1px}
+.toggle{padding:9px 14px; border-radius:10px; font-weight:600; font-size:13.5px; border:1px solid var(--line)}
+.toggle.attivo{background:var(--ok-bg); color:var(--ok); border-color:var(--ok-line)}
+.toggle.sospeso{background:var(--stop-bg); color:var(--stop); border-color:var(--stop-line)}
+
+.empty{text-align:center; color:var(--muted); padding:48px 20px; font-size:14px}
+.empty .big{font-size:30px; margin-bottom:8px}
+.loading{text-align:center; color:var(--muted); padding:40px; font-size:14px}
+.toast{
+  position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px);
+  background:var(--ink); color:#fff; padding:12px 18px; border-radius:12px; font-size:14px; font-weight:600;
+  opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:60; box-shadow:var(--sh);
+}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<!-- ==================== LOGIN ==================== -->
+<div id="loginView" class="login-wrap">
+  <div class="login">
+    <div class="brand"><span class="spark"></span>Scintilla<small>gestionale</small></div>
+    <p class="tag">Accedi al pannello della tua attività</p>
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" class="input" type="email" autocomplete="username" placeholder="tu@esempio.it" />
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" class="input" type="password" autocomplete="current-password" placeholder="••••••••" />
+    </div>
+    <button id="loginBtn" class="btn">Accedi</button>
+    <div id="loginMsg" class="msg"></div>
+  </div>
+</div>
+
+<!-- ==================== APP ==================== -->
+<div id="appView" class="hide">
+  <header class="topbar">
+    <div class="brand"><span class="spark"></span>Scintilla</div>
+    <div style="display:flex; align-items:center; gap:10px">
+      <div id="clientTag" class="client-tag"></div>
+      <button id="logoutBtn" class="icon-btn">Esci</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab on" data-tab="bookings">Prenotazioni</button>
+    <button class="tab" data-tab="history">Storico</button>
+    <button class="tab" data-tab="settings">Impostazioni</button>
+    <button class="tab hide" id="adminTabBtn" data-tab="admin">Admin</button>
+  </nav>
+
+  <!-- PRENOTAZIONI -->
+  <main id="tab-bookings" class="wrap">
+    <div class="filters">
+      <button class="chip on" data-when="all">Tutte</button>
+      <button class="chip" data-when="today">Oggi</button>
+      <button class="chip" data-when="tomorrow">Domani</button>
+      <input id="dateFilter" class="date" type="date" aria-label="Filtra per data" />
+      <select id="statusFilter" class="sel" aria-label="Filtra per stato">
+        <option value="">Tutti gli stati</option>
+        <option value="in_attesa">In attesa</option>
+        <option value="confermata">Confermate</option>
+        <option value="annullata">Annullate</option>
+      </select>
+    </div>
+    <div id="bookingsList"><div class="loading">Carico…</div></div>
+  </main>
+
+  <!-- STORICO -->
+  <main id="tab-history" class="wrap hide">
+    <div class="filters">
+      <input id="histSearch" class="input" style="max-width:280px" placeholder="Cerca per nome o telefono…" />
+    </div>
+    <div id="historyList"><div class="loading">Carico…</div></div>
+  </main>
+
+  <!-- IMPOSTAZIONI -->
+  <main id="tab-settings" class="wrap hide">
+    <div class="card">
+      <h3>Logo dell'attività</h3>
+      <p>Compare sul form di prenotazione del sito e come etichetta qui in alto. Se manca, si mostra il nome.</p>
+      <div id="logoPreview" class="logo-preview"></div>
+      <label class="file-btn">Carica un nuovo logo
+        <input id="logoInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" />
+      </label>
+    </div>
+    <div class="card">
+      <h3>Identità del sito</h3>
+      <p>Colori usati dal form di prenotazione. (Modificabili dal super admin.)</p>
+      <div id="brandingView"></div>
+    </div>
+  </main>
+
+  <!-- SUPER ADMIN -->
+  <main id="tab-admin" class="wrap hide">
+    <div class="card" style="margin-bottom:16px">
+      <h3>Stato attività</h3>
+      <p>Sospendi o riattiva un cliente. Un cliente sospeso non può accedere e il suo form di prenotazione è disattivato. (In futuro lo gestirà Stripe.)</p>
+    </div>
+    <div id="adminList"><div class="loading">Carico…</div></div>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+/* =====================================================================
+   CONFIG — sostituisci con i valori del tuo progetto Supabase
+   (Project Settings -> API). La anon key è pubblica: va bene qui.
+   ===================================================================== */
+const SUPABASE_URL      = "https://qorswaabqqcxpsmngbpo.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_xoKJtS9w_kv_dddgGl8Ycg_BC2UM0w6";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ---- stato ---- */
+let ME = null;            // { role, client_id }
+let CLIENT = null;        // riga clients dell'utente (per owner)
+let FILTER = { when:"all", date:"", status:"" };
+
+/* ---- utility ---- */
+const $ = s => document.querySelector(s);
+const esc = s => (s??"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const STATUS_LABEL = { in_attesa:"In attesa", confermata:"Confermata", annullata:"Annullata" };
+function toast(t){ const el=$("#toast"); el.textContent=t; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),2200); }
+function ymd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function isoToday(off=0){ const d=new Date(); d.setDate(d.getDate()+off); return ymd(d); }
+function fmtDay(iso){
+  const d=new Date(iso+"T00:00:00");
+  const s=d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
+  return s.charAt(0).toUpperCase()+s.slice(1);
+}
+function fmtDate(iso){ return new Date(iso+"T00:00:00").toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",yyyy:"numeric",year:"numeric"}); }
+function waLink(phone){ return "https://wa.me/"+(phone||"").replace(/\D/g,""); }
+function logoUrl(path){ return path ? sb.storage.from("logos").getPublicUrl(path).data.publicUrl : null; }
+
+/* =====================================================================
+   LOGIN
+   ===================================================================== */
+$("#loginBtn").addEventListener("click", doLogin);
+$("#password").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
+
+async function doLogin(){
+  const email=$("#email").value.trim(), password=$("#password").value;
+  const msg=$("#loginMsg"); msg.className="msg";
+  if(!email||!password){ msg.className="msg err"; msg.textContent="Inserisci email e password."; return; }
+  $("#loginBtn").disabled=true; $("#loginBtn").textContent="Accesso…";
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  $("#loginBtn").disabled=false; $("#loginBtn").textContent="Accedi";
+  if(error){ msg.className="msg err"; msg.textContent="Email o password non corretti."; return; }
+  await boot();
+}
+
+$("#logoutBtn").addEventListener("click", async ()=>{ await sb.auth.signOut(); location.reload(); });
+
+/* =====================================================================
+   BOOT — carica profilo, controlla stato attività, mostra l'app
+   ===================================================================== */
+async function boot(){
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user){ showLogin(); return; }
+
+  const { data:prof, error:pe } = await sb.from("profiles").select("role,client_id").eq("user_id",user.id).single();
+  if(pe || !prof){ await sb.auth.signOut(); showLogin("Account non collegato a nessuna attività."); return; }
+  ME = prof;
+
+  if(ME.role === "owner"){
+    const { data:cli } = await sb.from("clients").select("*").eq("id",ME.client_id).single();
+    if(!cli){ await sb.auth.signOut(); showLogin("Attività non trovata."); return; }
+    if(cli.status === "sospeso"){ await sb.auth.signOut(); showLogin("Il tuo account è sospeso. Contatta l'assistenza."); return; }
+    CLIENT = cli;
+  }
+
+  renderClientTag();
+  if(ME.role==="super_admin") $("#adminTabBtn").classList.remove("hide");
+  $("#loginView").classList.add("hide");
+  $("#appView").classList.remove("hide");
+  switchTab("bookings");
+}
+
+function showLogin(err){
+  $("#appView").classList.add("hide");
+  $("#loginView").classList.remove("hide");
+  if(err){ const m=$("#loginMsg"); m.className="msg err"; m.textContent=err; }
+}
+
+function renderClientTag(){
+  const tag=$("#clientTag");
+  if(ME.role==="super_admin"){ tag.innerHTML='<span class="name" style="color:var(--muted)">Super admin</span>'; return; }
+  const url=logoUrl(CLIENT.logo_path);
+  tag.innerHTML = url ? `<img src="${url}" alt="${esc(CLIENT.name)}" />`
+                      : `<span class="name">${esc(CLIENT.name)}</span>`;
+}
+
+/* =====================================================================
+   TABS
+   ===================================================================== */
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>switchTab(t.dataset.tab)));
+function switchTab(name){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
+  ["bookings","history","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
+  if(name==="bookings") loadBookings();
+  if(name==="history")  loadHistory();
+  if(name==="settings") loadSettings();
+  if(name==="admin")    loadAdmin();
+}
+
+/* =====================================================================
+   PRENOTAZIONI
+   ===================================================================== */
+document.querySelectorAll(".chip[data-when]").forEach(c=>c.addEventListener("click",()=>{
+  document.querySelectorAll(".chip[data-when]").forEach(x=>x.classList.remove("on"));
+  c.classList.add("on"); FILTER.when=c.dataset.when; $("#dateFilter").value=""; loadBookings();
+}));
+$("#dateFilter").addEventListener("change",e=>{
+  FILTER.date=e.target.value; FILTER.when="date";
+  document.querySelectorAll(".chip[data-when]").forEach(x=>x.classList.remove("on"));
+  loadBookings();
+});
+$("#statusFilter").addEventListener("change",e=>{ FILTER.status=e.target.value; loadBookings(); });
+
+async function loadBookings(){
+  const list=$("#bookingsList"); list.innerHTML='<div class="loading">Carico…</div>';
+  let q = sb.from("bookings")
+    .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,booking_types(label,key)")
+    .order("booking_date",{ascending:true}).order("booking_time",{ascending:true,nullsFirst:true});
+
+  if(FILTER.when==="today")    q=q.eq("booking_date",isoToday(0));
+  else if(FILTER.when==="tomorrow") q=q.eq("booking_date",isoToday(1));
+  else if(FILTER.when==="date" && FILTER.date) q=q.eq("booking_date",FILTER.date);
+  if(FILTER.status) q=q.eq("status",FILTER.status);
+
+  const { data, error } = await q;
+  if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
+  if(!data.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>Nessuna prenotazione con questi filtri.</div>`; return; }
+
+  const groups={};
+  data.forEach(b=>{ (groups[b.booking_date] ||= []).push(b); });
+  list.innerHTML = Object.keys(groups).sort().map(day=>`
+    <div class="daygroup">
+      <div class="dayhead">${esc(fmtDay(day))}</div>
+      ${groups[day].map(bookingCard).join("")}
+    </div>`).join("");
+}
+
+function bookingCard(b){
+  const time = b.booking_time ? b.booking_time.slice(0,5) : '<span class="notime">Orario libero</span>';
+  const type = b.booking_types ? b.booking_types.label : "";
+  const acts = [];
+  if(b.status!=="confermata") acts.push(`<button class="act confirm" data-act="confermata" data-id="${b.id}">Conferma</button>`);
+  if(b.status!=="annullata")  acts.push(`<button class="act cancel"  data-act="annullata"  data-id="${b.id}">Annulla</button>`);
+  if(b.status==="annullata")  acts.push(`<button class="act reopen"  data-act="in_attesa"  data-id="${b.id}">Riapri</button>`);
+  acts.push(`<a class="act wa" href="${waLink(b.customer_phone)}" target="_blank" rel="noopener" title="WhatsApp">WhatsApp</a>`);
+  return `
+  <div class="bk">
+    <div class="bk-top">
+      <div>
+        <div class="bk-time">${time}</div>
+        <div class="bk-name">${esc(b.customer_name)}</div>
+      </div>
+      <span class="status ${b.status}">${STATUS_LABEL[b.status]}</span>
+    </div>
+    <div class="bk-meta">
+      <span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>
+      ${type?`<span>${esc(type)}</span>`:""}
+      <a href="tel:${esc(b.customer_phone)}" style="color:inherit"><b>${esc(b.customer_phone)}</b></a>
+      ${b.notes?`<span style="flex-basis:100%">✎ ${esc(b.notes)}</span>`:""}
+    </div>
+    <div class="actions">${acts.join("")}</div>
+  </div>`;
+}
+
+$("#bookingsList").addEventListener("click", async e=>{
+  const btn=e.target.closest("[data-act]"); if(!btn) return;
+  btn.disabled=true;
+  const { error } = await sb.from("bookings").update({status:btn.dataset.act}).eq("id",btn.dataset.id);
+  if(error){ toast("Errore, riprova"); btn.disabled=false; return; }
+  toast(btn.dataset.act==="confermata"?"Prenotazione confermata":btn.dataset.act==="annullata"?"Prenotazione annullata":"Riaperta");
+  loadBookings();
+});
+
+/* =====================================================================
+   STORICO CLIENTE FINALE
+   ===================================================================== */
+let HIST=[];
+$("#histSearch").addEventListener("input",()=>renderHistory($("#histSearch").value.trim().toLowerCase()));
+
+async function loadHistory(){
+  const list=$("#historyList"); list.innerHTML='<div class="loading">Carico…</div>';
+  const { data, error } = await sb.from("customer_history").select("*").order("last_visit",{ascending:false});
+  if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
+  HIST=data||[]; renderHistory("");
+}
+function renderHistory(term){
+  const list=$("#historyList");
+  const rows = term ? HIST.filter(h => (h.name||"").toLowerCase().includes(term) || (h.customer_phone||"").includes(term)) : HIST;
+  if(!rows.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>${HIST.length?"Nessun risultato.":"Ancora nessun cliente con visite confermate."}</div>`; return; }
+  list.innerHTML = rows.map(h=>`
+    <div class="hist" data-phone="${esc(h.customer_phone)}" data-name="${esc(h.name)}" style="cursor:pointer">
+      <div class="who">
+        <b>${esc(h.name)}</b>
+        <div>${esc(h.customer_phone)} · prima ${fmtDate(h.first_visit)} · ultima ${fmtDate(h.last_visit)}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px">
+        <div class="visits"><div class="n">${h.visits}</div><div class="l">${h.visits==1?"visita":"visite"}</div></div>
+        <a class="act wa" href="${waLink(h.customer_phone)}" target="_blank" rel="noopener" data-wa="1" title="WhatsApp" style="text-decoration:none">WhatsApp</a>
+      </div>
+    </div>`).join("");
+}
+
+// clic sulla riga -> dettaglio cliente (il tasto WhatsApp resta escluso)
+$("#historyList").addEventListener("click", e=>{
+  if(e.target.closest("[data-wa]")) return;
+  const row=e.target.closest(".hist[data-phone]");
+  if(row) loadCustomerDetail(row.dataset.phone, row.dataset.name);
+});
+
+async function loadCustomerDetail(phone, name){
+  const list=$("#historyList"); list.innerHTML='<div class="loading">Carico…</div>';
+  const { data, error } = await sb.from("bookings")
+    .select("booking_date,booking_time,party_size,notes,booking_types(label)")
+    .eq("customer_phone", phone).eq("status","confermata")
+    .order("booking_date",{ascending:false}).order("booking_time",{ascending:false,nullsFirst:false});
+  if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
+  const items=(data||[]).map(b=>`
+    <div class="bk">
+      <div class="bk-top">
+        <div>
+          <div class="bk-time">${b.booking_time?b.booking_time.slice(0,5):'<span class="notime">Orario libero</span>'}</div>
+          <div class="bk-name">${esc(fmtDay(b.booking_date))}</div>
+        </div>
+        <span class="status confermata">Confermata</span>
+      </div>
+      <div class="bk-meta">
+        <span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>
+        ${b.booking_types?`<span>${esc(b.booking_types.label)}</span>`:""}
+        ${b.notes?`<span style="flex-basis:100%">✎ ${esc(b.notes)}</span>`:""}
+      </div>
+    </div>`).join("");
+  list.innerHTML = `
+    <button class="chip" id="histBack" style="margin-bottom:14px">← Torna allo storico</button>
+    <div class="card" style="margin-bottom:14px">
+      <h3 style="margin:0 0 2px">${esc(name)}</h3>
+      <p style="margin:0"><a href="${waLink(phone)}" target="_blank" rel="noopener" style="color:var(--muted)">${esc(phone)}</a> · ${data.length} ${data.length==1?"visita confermata":"visite confermate"}</p>
+    </div>
+    ${items || '<div class="empty">Nessuna visita confermata.</div>'}`;
+  $("#histBack").addEventListener("click",()=>renderHistory($("#histSearch").value.trim().toLowerCase()));
+}
+
+/* =====================================================================
+   IMPOSTAZIONI (logo + branding)
+   ===================================================================== */
+function loadSettings(){
+  if(ME.role!=="owner"){ $("#tab-settings").innerHTML='<div class="empty">Sezione disponibile per i titolari.</div>'; return; }
+  const url=logoUrl(CLIENT.logo_path);
+  $("#logoPreview").innerHTML = url
+    ? `<img src="${url}" alt="logo" /><span style="color:var(--muted);font-size:13px">Logo attuale</span>`
+    : `<div class="logo-fallback">${esc(CLIENT.name)}</div><span style="color:var(--muted);font-size:13px">Nessun logo — si mostra il nome</span>`;
+  const b=CLIENT.branding||{};
+  $("#brandingView").innerHTML = ["primary","secondary","accent"].filter(k=>b[k]).map(k=>
+    `<span class="swatch"><i style="background:${esc(b[k])}"></i>${k} ${esc(b[k])}</span>`).join("")
+    + (b.font?`<div style="margin-top:10px;color:var(--muted);font-size:13px">Font: <b style="color:var(--ink)">${esc(b.font)}</b></div>`:"");
+}
+
+$("#logoInput").addEventListener("change", async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const ext=(file.name.split(".").pop()||"png").toLowerCase();
+  const path=`${CLIENT.id}/logo.${ext}`;
+  toast("Carico il logo…");
+  const { error:upErr } = await sb.storage.from("logos").upload(path,file,{upsert:true,cacheControl:"3600"});
+  if(upErr){ toast("Errore upload: "+upErr.message); return; }
+  const { error:dbErr } = await sb.from("clients").update({logo_path:path}).eq("id",CLIENT.id);
+  if(dbErr){ toast("Errore salvataggio"); return; }
+  CLIENT.logo_path=path;
+  renderClientTag(); loadSettings(); toast("Logo aggiornato");
+});
+
+/* =====================================================================
+   SUPER ADMIN — stato attività (gancio manuale, poi Stripe)
+   ===================================================================== */
+async function loadAdmin(){
+  const list=$("#adminList"); list.innerHTML='<div class="loading">Carico…</div>';
+  const { data, error } = await sb.from("clients").select("id,name,slug,status").order("name");
+  if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
+  list.innerHTML = data.map(c=>`
+    <div class="admin-row">
+      <div><div class="a-name">${esc(c.name)}</div><div class="a-slug">${esc(c.slug)}</div></div>
+      <button class="toggle ${c.status}" data-id="${c.id}" data-status="${c.status}">
+        ${c.status==="attivo"?"Attivo":"Sospeso"}
+      </button>
+    </div>`).join("");
+}
+$("#adminList").addEventListener("click", async e=>{
+  const btn=e.target.closest(".toggle"); if(!btn) return;
+  const next = btn.dataset.status==="attivo" ? "sospeso" : "attivo";
+  btn.disabled=true;
+  const { error } = await sb.from("clients").update({status:next}).eq("id",btn.dataset.id);
+  btn.disabled=false;
+  if(error){ toast("Errore: "+error.message); return; }
+  toast(next==="attivo"?"Attività riattivata":"Attività sospesa"); loadAdmin();
+});
+
+/* =====================================================================
+   AVVIO
+   ===================================================================== */
+(async()=>{ const { data:{ session } } = await sb.auth.getSession(); if(session) boot(); else showLogin(); })();
+</script>
+</body>
+</html>
