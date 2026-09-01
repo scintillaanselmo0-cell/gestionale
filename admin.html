@@ -323,10 +323,13 @@ async function boot(){
   }
 
   renderClientTag();
-  if(ME.role==="super_admin") $("#adminTabBtn").classList.remove("hide");
+  if(ME.role==="super_admin"){
+    document.querySelectorAll('.tab[data-tab="bookings"], .tab[data-tab="history"], .tab[data-tab="settings"]').forEach(t=>t.classList.add("hide"));
+    $("#adminTabBtn").classList.remove("hide");
+  }
   $("#loginView").classList.add("hide");
   $("#appView").classList.remove("hide");
-  switchTab("bookings");
+  switchTab(ME.role==="super_admin" ? "admin" : "bookings");
 }
 
 function showLogin(err){
