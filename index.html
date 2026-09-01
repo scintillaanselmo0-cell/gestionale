@@ -117,6 +117,8 @@ input,select{font-family:inherit}
 .act.cancel{background:var(--card); border-color:var(--stop-line); color:var(--stop)}
 .act.reopen{color:var(--muted)}
 .act.wa{flex:0 0 auto; padding:11px 14px; border-color:var(--line); color:var(--ok)}
+.act.del{flex:0 0 auto; padding:11px 14px; border-color:var(--line); color:var(--muted)}
+.act.del:hover{border-color:var(--stop-line); color:var(--stop)}
 
 /* ---- storico ---- */
 .hist{
@@ -407,6 +409,7 @@ function bookingCard(b){
   if(b.status!=="annullata")  acts.push(`<button class="act cancel"  data-act="annullata"  data-id="${b.id}">Annulla</button>`);
   if(b.status==="annullata")  acts.push(`<button class="act reopen"  data-act="in_attesa"  data-id="${b.id}">Riapri</button>`);
   acts.push(`<a class="act wa" href="${waLink(b.customer_phone)}" target="_blank" rel="noopener" title="WhatsApp">WhatsApp</a>`);
+  acts.push(`<button class="act del" data-del="${b.id}" title="Elimina definitivamente">Elimina</button>`);
   return `
   <div class="bk">
     <div class="bk-top">
@@ -427,6 +430,14 @@ function bookingCard(b){
 }
 
 $("#bookingsList").addEventListener("click", async e=>{
+  const del=e.target.closest("[data-del]");
+  if(del){
+    if(!confirm("Eliminare definitivamente questa prenotazione?\nL'azione non è reversibile.")) return;
+    del.disabled=true;
+    const { error } = await sb.from("bookings").delete().eq("id", del.dataset.del);
+    if(error){ toast("Errore, riprova"); del.disabled=false; return; }
+    toast("Prenotazione eliminata"); loadBookings(); return;
+  }
   const btn=e.target.closest("[data-act]"); if(!btn) return;
   btn.disabled=true;
   const { error } = await sb.from("bookings").update({status:btn.dataset.act}).eq("id",btn.dataset.id);
