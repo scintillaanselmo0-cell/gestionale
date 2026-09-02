@@ -188,6 +188,24 @@ input,select{font-family:inherit}
   opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:60; box-shadow:var(--sh);
 }
 .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+
+/* badge notifiche sulla tab */
+.tab{position:relative}
+.tab-badge{display:inline-grid; place-items:center; min-width:18px; height:18px; padding:0 5px; margin-left:6px; border-radius:9px; background:var(--stop); color:#fff; font-size:11px; font-weight:800; vertical-align:middle}
+/* banner nuova prenotazione */
+.new-banner{display:flex; align-items:center; gap:10px; background:var(--warn-bg); border:1px solid var(--warn-line); color:var(--warn); border-radius:12px; padding:11px 14px; margin-bottom:14px; font-weight:600; font-size:14px; cursor:pointer}
+/* modale */
+.modal-back{position:fixed; inset:0; z-index:70; background:rgba(20,25,23,.45); display:flex; align-items:flex-end; justify-content:center; padding:0}
+@media(min-width:560px){ .modal-back{align-items:center; padding:20px} }
+.modal{background:var(--card); width:100%; max-width:460px; border-radius:18px 18px 0 0; max-height:92vh; overflow:auto; box-shadow:var(--sh)}
+@media(min-width:560px){ .modal{border-radius:18px} }
+.modal-head{position:sticky; top:0; background:var(--card); display:flex; align-items:center; justify-content:space-between; padding:18px 18px 12px; border-bottom:1px solid var(--line)}
+.modal-head h3{margin:0; font-size:17px}
+.modal-x{border:0; background:transparent; font-size:20px; color:var(--muted); cursor:pointer; padding:4px 8px}
+.modal-body{padding:16px 18px 22px}
+.mfield{margin-bottom:12px}
+.mfield label{display:block; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px}
+.mrow{display:grid; grid-template-columns:1fr 1fr; gap:12px}
 </style>
 </head>
 <body>
@@ -221,9 +239,9 @@ input,select{font-family:inherit}
   </header>
 
   <nav class="tabs">
-    <button class="tab on" data-tab="bookings">Prenotazioni</button>
-    <button class="tab" data-tab="history">Storico</button>
-    <button class="tab" data-tab="settings">Impostazioni</button>
+    <button class="tab on" data-tab="bookings" data-mod="prenotazioni">Prenotazioni<span id="bkBadge" class="tab-badge hide"></span></button>
+    <button class="tab" data-tab="history" data-mod="storico">Storico</button>
+    <button class="tab" data-tab="settings" data-mod="impostazioni">Impostazioni</button>
     <button class="tab hide" id="adminTabBtn" data-tab="admin">Admin</button>
   </nav>
 
@@ -241,7 +259,9 @@ input,select{font-family:inherit}
         <option value="annullata">Annullate</option>
       </select>
       <button class="chip" id="selectToggle" style="margin-left:auto">Seleziona</button>
+      <button class="chip" id="addBookingBtn" style="background:var(--ink);color:#fff;border-color:var(--ink)">+ Aggiungi</button>
     </div>
+    <div id="newBanner" class="new-banner hide"></div>
     <div id="bookingsList"><div class="loading">Carico…</div></div>
     <div id="bulkBar">
       <button class="bulk-btn" id="bulkAll">Seleziona tutte</button>
@@ -290,6 +310,38 @@ input,select{font-family:inherit}
 
 <div id="toast" class="toast"></div>
 
+<!-- MODALE: aggiungi prenotazione manuale (solo titolare) -->
+<div id="addModal" class="modal-back hide">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Aggiungi prenotazione</h3>
+      <button class="modal-x" id="addClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="addMsg" class="msg"></div>
+      <div class="mfield"><label>Tipo</label><select id="mType" class="input"></select></div>
+      <div class="mrow">
+        <div class="mfield"><label>Data</label><input id="mDate" type="date" class="input" /></div>
+        <div class="mfield"><label>Orario</label><input id="mTime" type="time" class="input" /></div>
+      </div>
+      <div class="mrow">
+        <div class="mfield"><label>Persone</label><input id="mParty" type="number" min="1" value="2" class="input" /></div>
+        <div class="mfield"><label>Stato</label>
+          <select id="mStatus" class="input">
+            <option value="confermata" selected>Confermata</option>
+            <option value="in_attesa">In attesa</option>
+            <option value="annullata">Annullata</option>
+          </select>
+        </div>
+      </div>
+      <div class="mfield"><label>Nome</label><input id="mName" class="input" placeholder="Mario Rossi" /></div>
+      <div class="mfield"><label>Telefono</label><input id="mPhone" type="tel" class="input" placeholder="350 142 7341" /></div>
+      <div class="mfield"><label>Note <span style="color:var(--muted);font-weight:400">(facoltative)</span></label><input id="mNotes" class="input" /></div>
+      <button class="btn" id="addSave" style="margin-top:6px">Salva prenotazione</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
 /* =====================================================================
@@ -308,6 +360,10 @@ let FILTER = { when:"all", date:"", status:"" };
 let ADMIN_CLIENT = null;   // se valorizzato, il super admin sta gestendo le prenotazioni di questo cliente
 let SELECT_MODE = false;   // modalità selezione multipla attiva
 const SELECTED = new Set();
+let AUDIO = null;          // AudioContext per il beep
+let RT_CHANNEL = null;     // canale Supabase Realtime
+let BTYPES = [];           // tipi di prenotazione del cliente (per l'aggiunta manuale)
+let NEW_COUNT = 0;         // nuove prenotazioni non ancora viste
 
 /* ---- utility ---- */
 const $ = s => document.querySelector(s);
@@ -321,7 +377,7 @@ function fmtDay(iso){
   const s=d.toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});
   return s.charAt(0).toUpperCase()+s.slice(1);
 }
-function fmtDate(iso){ return new Date(iso+"T00:00:00").toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",yyyy:"numeric",year:"numeric"}); }
+function fmtDate(iso){ return new Date(iso+"T00:00:00").toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"}); }
 function waLink(phone){ return "https://wa.me/"+(phone||"").replace(/\D/g,""); }
 function logoUrl(path){ return path ? sb.storage.from("logos").getPublicUrl(path).data.publicUrl : null; }
 
@@ -332,6 +388,7 @@ $("#loginBtn").addEventListener("click", doLogin);
 $("#password").addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
 
 async function doLogin(){
+  unlockAudio();   // sblocca l'audio alla prima interazione, così il beep non viene bloccato
   const email=$("#email").value.trim(), password=$("#password").value;
   const msg=$("#loginMsg"); msg.className="msg";
   if(!email||!password){ msg.className="msg err"; msg.textContent="Inserisci email e password."; return; }
@@ -366,10 +423,33 @@ async function boot(){
   if(ME.role==="super_admin"){
     document.querySelectorAll('.tab[data-tab="bookings"], .tab[data-tab="history"], .tab[data-tab="settings"]').forEach(t=>t.classList.add("hide"));
     $("#adminTabBtn").classList.remove("hide");
+    $("#loginView").classList.add("hide");
+    $("#appView").classList.remove("hide");
+    switchTab("admin");
+    return;
   }
+
+  // --- TITOLARE: tab dinamiche dai moduli attivi ---
+  const { data:mods } = await sb.from("client_modules").select("module_key,enabled").eq("client_id",CLIENT.id);
+  let enabled = (mods||[]).filter(m=>m.enabled).map(m=>m.module_key);
+  if(!enabled.length) enabled = ["prenotazioni","storico","impostazioni"];   // default sensato
+  let firstTab = null;
+  document.querySelectorAll('.tab[data-mod]').forEach(t=>{
+    const on = enabled.includes(t.dataset.mod);
+    t.classList.toggle("hide", !on);
+    if(on && !firstTab) firstTab = t.dataset.tab;
+  });
+
+  // tipi di prenotazione (per l'aggiunta manuale)
+  const { data:bts } = await sb.from("booking_types").select("key,label").eq("client_id",CLIENT.id).eq("active",true).order("sort_order");
+  BTYPES = bts||[];
+  $("#addBookingBtn").classList.toggle("hide", !enabled.includes("prenotazioni"));
+
+  startRealtime();
+
   $("#loginView").classList.add("hide");
   $("#appView").classList.remove("hide");
-  switchTab(ME.role==="super_admin" ? "admin" : "bookings");
+  switchTab(firstTab || "bookings");
 }
 
 function showLogin(err){
@@ -392,6 +472,7 @@ function renderClientTag(){
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>switchTab(t.dataset.tab)));
 function switchTab(name){
   if(SELECT_MODE) exitSelect();
+  if(name==="bookings") clearNewBadge();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
   ["bookings","history","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
   if(name==="bookings") loadBookings();
@@ -697,6 +778,101 @@ function closeClientBookings(){
   $("#tab-bookings").classList.add("hide");
   $("#tab-admin").classList.remove("hide");
   loadAdmin();
+}
+
+/* =====================================================================
+   AUDIO (beep senza file esterni) + REALTIME (notifica dal vivo)
+   ===================================================================== */
+function unlockAudio(){
+  try{
+    if(!AUDIO) AUDIO = new (window.AudioContext||window.webkitAudioContext)();
+    if(AUDIO.state==="suspended") AUDIO.resume();
+  }catch(e){}
+}
+["click","touchstart","keydown"].forEach(ev=>document.addEventListener(ev, unlockAudio, { once:true }));
+function beep(){
+  if(!AUDIO) return;
+  try{
+    const o=AUDIO.createOscillator(), g=AUDIO.createGain();
+    o.type="sine"; o.frequency.value=880;
+    g.gain.setValueAtTime(0.0001, AUDIO.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.25, AUDIO.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, AUDIO.currentTime+0.35);
+    o.connect(g); g.connect(AUDIO.destination);
+    o.start(); o.stop(AUDIO.currentTime+0.36);
+  }catch(e){}
+}
+
+function startRealtime(){
+  if(!CLIENT) return;
+  if(RT_CHANNEL){ sb.removeChannel(RT_CHANNEL); RT_CHANNEL=null; }
+  RT_CHANNEL = sb.channel("bk-"+CLIENT.id)
+    .on("postgres_changes",
+      { event:"INSERT", schema:"public", table:"bookings", filter:"client_id=eq."+CLIENT.id },
+      payload => onNewBooking(payload.new))
+    .subscribe();
+}
+function onNewBooking(b){
+  beep();
+  NEW_COUNT++;
+  const badge=$("#bkBadge");
+  badge.textContent = NEW_COUNT; badge.classList.remove("hide");
+  // banner sulla tab prenotazioni
+  const banner=$("#newBanner");
+  const who = b && b.customer_name ? esc(b.customer_name) : "una nuova prenotazione";
+  banner.innerHTML = `🔔 Nuova prenotazione: <b>${who}</b> — tocca per aggiornare`;
+  banner.classList.remove("hide");
+  // se sei già sulla tab prenotazioni, ricarica al volo
+  const onBookings = !$("#tab-bookings").classList.contains("hide");
+  if(onBookings && !ADMIN_CLIENT){ loadBookings(); clearNewBadge(); }
+}
+$("#newBanner").addEventListener("click", ()=>{ loadBookings(); clearNewBadge(); });
+function clearNewBadge(){
+  NEW_COUNT=0;
+  $("#bkBadge").classList.add("hide");
+  $("#newBanner").classList.add("hide");
+}
+
+/* =====================================================================
+   AGGIUNTA MANUALE PRENOTAZIONE (solo titolare)
+   ===================================================================== */
+$("#addBookingBtn").addEventListener("click", openAddModal);
+$("#addClose").addEventListener("click", ()=>$("#addModal").classList.add("hide"));
+$("#addModal").addEventListener("click", e=>{ if(e.target.id==="addModal") $("#addModal").classList.add("hide"); });
+$("#addSave").addEventListener("click", saveManualBooking);
+
+function openAddModal(){
+  $("#mType").innerHTML = BTYPES.map(t=>`<option value="${esc(t.key)}">${esc(t.label)}</option>`).join("");
+  $("#mDate").value = isoToday(0);
+  $("#mTime").value = "";
+  $("#mParty").value = 2;
+  $("#mStatus").value = "confermata";
+  $("#mName").value = ""; $("#mPhone").value = ""; $("#mNotes").value = "";
+  $("#addMsg").className = "msg";
+  $("#addModal").classList.remove("hide");
+}
+async function saveManualBooking(){
+  const m=$("#addMsg"); m.className="msg";
+  const type=$("#mType").value, date=$("#mDate").value, time=$("#mTime").value;
+  const name=$("#mName").value.trim(), phone=$("#mPhone").value.trim();
+  const party=parseInt($("#mParty").value,10)||1, status=$("#mStatus").value, notes=$("#mNotes").value.trim();
+  if(!type){ m.className="msg err"; m.textContent="Scegli il tipo."; return; }
+  if(!date){ m.className="msg err"; m.textContent="Inserisci la data."; return; }
+  if(!name){ m.className="msg err"; m.textContent="Inserisci il nome."; return; }
+  if(!phone){ m.className="msg err"; m.textContent="Inserisci il telefono."; return; }
+  $("#addSave").disabled=true; $("#addSave").textContent="Salvo…";
+  const { data, error } = await sb.rpc("create_manual_booking",{
+    p_type_key:type, p_name:name, p_phone:phone, p_date:date,
+    p_time: time||null, p_party:party, p_status:status, p_notes: notes||null
+  });
+  $("#addSave").disabled=false; $("#addSave").textContent="Salva prenotazione";
+  if(error || !data || !data.ok){
+    m.className="msg err"; m.textContent = (data&&data.error) ? data.error : "Errore nel salvataggio.";
+    return;
+  }
+  $("#addModal").classList.add("hide");
+  toast("Prenotazione aggiunta");
+  loadBookings();
 }
 
 /* =====================================================================
