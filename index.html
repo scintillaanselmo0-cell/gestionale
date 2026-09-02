@@ -213,6 +213,13 @@ input,select{font-family:inherit}
 .mfield{margin-bottom:12px}
 .mfield label{display:block; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px}
 .mrow{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+/* coda invio conferme WhatsApp */
+.waq-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--line-soft)}
+.waq-row .who b{font-weight:700; font-size:15px}
+.waq-row .who div{color:var(--muted); font-size:13px; margin-top:2px}
+.waq-send{flex:0 0 auto; text-decoration:none; background:var(--ok); color:#fff; border:1px solid var(--ok); border-radius:10px; padding:10px 16px; font-weight:600; font-size:14px}
+.waq-row.done{opacity:.5}
+.waq-row.done .waq-send{background:var(--card); color:var(--muted); border-color:var(--line)}
 </style>
 </head>
 <body>
@@ -298,6 +305,16 @@ input,select{font-family:inherit}
       <div id="pushHint" style="font-size:13px; color:var(--muted); margin-top:12px"></div>
     </div>
     <div class="card">
+      <h3>Messaggio di conferma WhatsApp</h3>
+      <p>Il testo inviato al cliente quando confermi una prenotazione. Segnaposto disponibili: <b>{nome}</b>, <b>{data}</b>, <b>{ora}</b>, <b>{persone}</b>, <b>{attivita}</b>.</p>
+      <textarea id="tplInput" class="input" style="min-height:96px; resize:vertical" placeholder="Lascia vuoto per usare il messaggio predefinito"></textarea>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:12px; flex-wrap:wrap">
+        <button class="file-btn" id="tplSave" style="border:0; background:var(--ink); color:#fff">Salva messaggio</button>
+        <button class="chip" id="tplReset">Ripristina predefinito</button>
+      </div>
+      <div id="tplPreview" style="font-size:13px; color:var(--muted); margin-top:12px"></div>
+    </div>
+    <div class="card">
       <h3>Logo dell'attività</h3>
       <p>Compare sul form di prenotazione del sito e come etichetta qui in alto. Se manca, si mostra il nome.</p>
       <div id="logoPreview" class="logo-preview"></div>
@@ -379,6 +396,8 @@ const SELECTED = new Set();
 let AUDIO = null;          // AudioContext per il beep
 let RT_CHANNEL = null;     // canale Supabase Realtime
 let BTYPES = [];           // tipi di prenotazione del cliente (per l'aggiunta manuale)
+let LAST_BOOKINGS = [];    // ultime prenotazioni caricate (per i link WhatsApp)
+const DEFAULT_CONFIRM = "Ciao {nome}! La tua prenotazione da {attivita} è confermata per {data} alle {ora} ({persone} persone). Ti aspettiamo!";
 let NEW_COUNT = 0;         // nuove prenotazioni non ancora viste
 
 /* ---- utility ---- */
@@ -396,6 +415,71 @@ function fmtDay(iso){
 function fmtDate(iso){ return new Date(iso+"T00:00:00").toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"}); }
 function waLink(phone){ return "https://wa.me/"+(phone||"").replace(/\D/g,""); }
 function logoUrl(path){ return path ? sb.storage.from("logos").getPublicUrl(path).data.publicUrl : null; }
+
+/* ---- conferma WhatsApp precompilata ---- */
+function waDigits(phone){ return (phone||"").replace(/\D/g,""); }
+function firstName(name){ return (name||"").trim().split(/\s+/)[0] || ""; }
+function fmtLongDate(iso){
+  try{ return new Date(iso+"T00:00:00").toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"}); }
+  catch(_){ return iso; }
+}
+function whenText(b){
+  const t = b.booking_time ? " alle "+b.booking_time.slice(0,5) : "";
+  return fmtLongDate(b.booking_date)+t;
+}
+function bookingById(id){ return LAST_BOOKINGS.find(b=>b.id===id) || null; }
+function confirmMessage(b){
+  const tpl = (CLIENT && CLIENT.confirm_message_template) ? CLIENT.confirm_message_template : DEFAULT_CONFIRM;
+  return tpl
+    .split("{nome}").join(firstName(b.customer_name))
+    .split("{data}").join(fmtLongDate(b.booking_date))
+    .split("{ora}").join(b.booking_time ? b.booking_time.slice(0,5) : "")
+    .split("{persone}").join(b.party_size)
+    .split("{attivita}").join(CLIENT ? CLIENT.name : "");
+}
+function waConfirmLink(b){
+  const d = waDigits(b.customer_phone);
+  if(!d) return null;
+  return "https://wa.me/"+d+"?text="+encodeURIComponent(confirmMessage(b));
+}
+
+/* ---- coda guidata invio conferme (Conferma tutte) ---- */
+function openWaQueue(items){
+  if(!items.length) return;
+  const total=items.length; let sent=0;
+  const back=document.createElement("div");
+  back.className="modal-back"; back.id="waQueueBack";
+  back.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <h3>Invia conferme WhatsApp</h3>
+        <button class="modal-x" id="waqClose">Chiudi</button>
+      </div>
+      <div class="modal-body">
+        <div id="waqCount" style="font-weight:700; color:var(--muted); margin-bottom:6px">0 di ${total} inviati</div>
+        <p style="margin:0 0 14px; color:var(--muted); font-size:13px">Tocca ogni cliente in ordine: si apre WhatsApp col messaggio già pronto. Torna qui e passa al successivo.</p>
+        <div id="waqList"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  back.querySelector("#waqList").innerHTML = items.map((it,i)=>`
+    <div class="waq-row" data-i="${i}">
+      <div class="who"><b>${esc(it.name)}</b><div>${esc(it.whenText)}</div></div>
+      <a class="waq-send" href="${it.link}" target="_blank" rel="noopener" data-i="${i}">Invia</a>
+    </div>`).join("");
+  function close(){ back.remove(); loadBookings(); }
+  back.querySelector("#waqClose").addEventListener("click", close);
+  back.addEventListener("click", e=>{ if(e.target===back) close(); });
+  back.querySelector("#waqList").addEventListener("click", e=>{
+    const a=e.target.closest(".waq-send"); if(!a) return;
+    const row=a.closest(".waq-row");
+    if(row && !row.classList.contains("done")){
+      row.classList.add("done"); a.textContent="Inviato ✓";
+      sent++; back.querySelector("#waqCount").textContent = sent+" di "+total+" inviati";
+    }
+    // niente preventDefault: lascia aprire WhatsApp
+  });
+}
 
 /* =====================================================================
    LOGIN
@@ -526,6 +610,7 @@ async function loadBookings(){
 
   const { data, error } = await q;
   if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
+  LAST_BOOKINGS = data;
   if(!data.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>Nessuna prenotazione con questi filtri.</div>`; return; }
 
   const groups={};
@@ -544,7 +629,7 @@ function bookingCard(b){
   if(b.status!=="confermata") acts.push(`<button class="act confirm" data-act="confermata" data-id="${b.id}">Conferma</button>`);
   if(b.status!=="annullata")  acts.push(`<button class="act cancel"  data-act="annullata"  data-id="${b.id}">Annulla</button>`);
   if(b.status==="annullata")  acts.push(`<button class="act reopen"  data-act="in_attesa"  data-id="${b.id}">Riapri</button>`);
-  acts.push(`<a class="act wa" href="${waLink(b.customer_phone)}" target="_blank" rel="noopener" title="WhatsApp">WhatsApp</a>`);
+  if(waDigits(b.customer_phone)) acts.push(`<a class="act wa" href="${waLink(b.customer_phone)}" target="_blank" rel="noopener" title="WhatsApp">WhatsApp</a>`);
   acts.push(`<button class="act del" data-del="${b.id}" title="Elimina definitivamente">Elimina</button>`);
   return `
   <div class="bk" data-id="${b.id}">
@@ -576,6 +661,12 @@ $("#bookingsList").addEventListener("click", async e=>{
     else { SELECTED.add(id); card.classList.add("picked"); }
     updateBulkBar(); return;
   }
+  // tap sul link "Invia conferma WhatsApp" (conferma singola) -> lascia aprire WhatsApp, poi ricarica
+  const waC = e.target.closest("[data-waconfirm]");
+  if(waC){ setTimeout(loadBookings, 1200); return; }
+  const doneBtn = e.target.closest("[data-done]");
+  if(doneBtn){ loadBookings(); return; }
+
   const del=e.target.closest("[data-del]");
   if(del){
     if(!confirm("Eliminare definitivamente questa prenotazione?\nL'azione non è reversibile.")) return;
@@ -588,7 +679,25 @@ $("#bookingsList").addEventListener("click", async e=>{
   btn.disabled=true;
   const { error } = await sb.from("bookings").update({status:btn.dataset.act}).eq("id",btn.dataset.id);
   if(error){ toast("Errore, riprova"); btn.disabled=false; return; }
-  toast(btn.dataset.act==="confermata"?"Prenotazione confermata":btn.dataset.act==="annullata"?"Prenotazione annullata":"Riaperta");
+
+  // CONFERMA singola: proponi l'invio WhatsApp precompilato (si apre sul tap dell'utente)
+  if(btn.dataset.act==="confermata"){
+    const b = bookingById(btn.dataset.id);
+    const link = b ? waConfirmLink(b) : null;
+    const card = btn.closest(".bk");
+    const actions = card ? card.querySelector(".actions") : null;
+    if(link && actions){
+      toast("Confermata");
+      actions.innerHTML =
+        `<a class="act confirm" href="${link}" target="_blank" rel="noopener" data-waconfirm="1" style="text-decoration:none">Invia conferma WhatsApp</a>`+
+        `<button class="act" data-done="1">Fatto</button>`;
+      return;
+    }
+    toast("Prenotazione confermata"); loadBookings(); return;
+  }
+
+  // Annulla / Riapri: nessun WhatsApp
+  toast(btn.dataset.act==="annullata"?"Prenotazione annullata":"Riaperta");
   loadBookings();
 });
 
@@ -633,6 +742,8 @@ function setBulkDisabled(v){ ["bulkAll","bulkConfirm","bulkCancel","bulkDelete",
 async function bulkApply(action){
   const ids=[...SELECTED]; if(!ids.length) return;
   if(action==="delete" && !confirm(`Eliminare definitivamente ${ids.length} ${ids.length===1?"prenotazione":"prenotazioni"}?\nL'azione non è reversibile.`)) return;
+  // cattura i dati PRIMA di ricaricare (servono per i messaggi WhatsApp)
+  const picked = ids.map(id=>bookingById(id)).filter(Boolean);
   setBulkDisabled(true);
   let error;
   if(action==="delete"){ ({ error } = await sb.from("bookings").delete().in("id", ids)); }
@@ -641,6 +752,15 @@ async function bulkApply(action){
   if(error){ toast("Errore, riprova"); return; }
   toast(action==="delete"?`${ids.length} eliminate`:action==="confermata"?`${ids.length} confermate`:`${ids.length} annullate`);
   SELECTED.clear();
+
+  // SOLO "Conferma tutte": coda guidata WhatsApp (annulla/elimina non generano nulla)
+  if(action==="confermata"){
+    const items = picked
+      .filter(b=>waDigits(b.customer_phone))
+      .map(b=>({ name: firstName(b.customer_name), whenText: whenText(b), link: waConfirmLink(b) }));
+    exitSelect();
+    if(items.length){ openWaQueue(items); return; }   // la coda ricarica alla chiusura
+  }
   await loadBookings();
   updateBulkBar();
 }
@@ -727,7 +847,33 @@ function loadSettings(){
   $("#brandingView").innerHTML = ["primary","secondary","accent"].filter(k=>b[k]).map(k=>
     `<span class="swatch"><i style="background:${esc(b[k])}"></i>${k} ${esc(b[k])}</span>`).join("")
     + (b.font?`<div style="margin-top:10px;color:var(--muted);font-size:13px">Font: <b style="color:var(--ink)">${esc(b.font)}</b></div>`:"");
+  // messaggio di conferma
+  $("#tplInput").value = CLIENT.confirm_message_template || "";
+  renderTplPreview();
 }
+
+function renderTplPreview(){
+  const tpl = $("#tplInput").value.trim() || DEFAULT_CONFIRM;
+  const sample = { customer_name:"Mario Rossi", booking_date:"2026-09-06", booking_time:"20:00:00", party_size:4 };
+  const msg = tpl
+    .split("{nome}").join(firstName(sample.customer_name))
+    .split("{data}").join(fmtLongDate(sample.booking_date))
+    .split("{ora}").join("20:00")
+    .split("{persone}").join(sample.party_size)
+    .split("{attivita}").join(CLIENT ? CLIENT.name : "");
+  $("#tplPreview").innerHTML = `<b>Anteprima:</b> ${esc(msg)}`;
+}
+$("#tplInput").addEventListener("input", renderTplPreview);
+$("#tplReset").addEventListener("click", ()=>{ $("#tplInput").value=""; renderTplPreview(); });
+$("#tplSave").addEventListener("click", async ()=>{
+  const val = $("#tplInput").value.trim();
+  $("#tplSave").disabled=true;
+  const { error } = await sb.from("clients").update({ confirm_message_template: val || null }).eq("id", CLIENT.id);
+  $("#tplSave").disabled=false;
+  if(error){ toast("Errore nel salvataggio"); return; }
+  CLIENT.confirm_message_template = val || null;
+  toast("Messaggio salvato");
+});
 
 $("#logoInput").addEventListener("change", async e=>{
   const file=e.target.files[0]; if(!file) return;
