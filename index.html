@@ -4,6 +4,13 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Scintilla — Gestionale</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#191C1B" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<meta name="apple-mobile-web-app-title" content="Scintilla" />
+<link rel="apple-touch-icon" href="icon-192.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -284,6 +291,13 @@ input,select{font-family:inherit}
   <!-- IMPOSTAZIONI -->
   <main id="tab-settings" class="wrap hide">
     <div class="card">
+      <h3>Notifiche sul telefono</h3>
+      <p>Ricevi un avviso quando arriva una prenotazione, anche col pannello chiuso. Attivalo su ogni dispositivo su cui vuoi gli avvisi.</p>
+      <div id="pushStatus" style="font-size:14px; color:var(--muted); margin-bottom:14px"></div>
+      <button class="file-btn" id="pushBtn" style="border:0; background:var(--ink); color:#fff">Attiva notifiche su questo dispositivo</button>
+      <div id="pushHint" style="font-size:13px; color:var(--muted); margin-top:12px"></div>
+    </div>
+    <div class="card">
       <h3>Logo dell'attività</h3>
       <p>Compare sul form di prenotazione del sito e come etichetta qui in alto. Se manca, si mostra il nome.</p>
       <div id="logoPreview" class="logo-preview"></div>
@@ -350,6 +364,8 @@ input,select{font-family:inherit}
    ===================================================================== */
 const SUPABASE_URL      = "https://qorswaabqqcxpsmngbpo.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_xoKJtS9w_kv_dddgGl8Ycg_BC2UM0w6";
+// Chiave PUBBLICA VAPID (generata con vapid-gen.html) — è pubblica, va bene qui.
+const VAPID_PUBLIC_KEY  = "BHzOjm_hlNTO6sVR4H1BA23hzVVYO_MeVwyXeQwQNNeHSsRe6idQ2fqQNNtodQtiWJdrTAdu9XXaIxGZhYYImH0";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -702,6 +718,7 @@ async function loadCustomerDetail(phone, name){
    ===================================================================== */
 function loadSettings(){
   if(ME.role!=="owner"){ $("#tab-settings").innerHTML='<div class="empty">Sezione disponibile per i titolari.</div>'; return; }
+  renderPushState();
   const url=logoUrl(CLIENT.logo_path);
   $("#logoPreview").innerHTML = url
     ? `<img src="${url}" alt="logo" /><span style="color:var(--muted);font-size:13px">Logo attuale</span>`
@@ -874,6 +891,75 @@ async function saveManualBooking(){
   toast("Prenotazione aggiunta");
   loadBookings();
 }
+
+/* =====================================================================
+   PWA + PUSH
+   ===================================================================== */
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+function urlB64ToUint8Array(b64){
+  const pad="=".repeat((4-b64.length%4)%4);
+  const base=(b64+pad).replace(/-/g,"+").replace(/_/g,"/");
+  const raw=atob(base); const arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+async function renderPushState(){
+  const st=$("#pushStatus"), btn=$("#pushBtn"), hint=$("#pushHint");
+  if(!st) return;
+  if(!("serviceWorker" in navigator) || !("PushManager" in window)){
+    st.textContent="Questo dispositivo/browser non supporta le notifiche push.";
+    btn.classList.add("hide"); return;
+  }
+  if(isIOS && !isStandalone){
+    st.textContent="Per attivare le notifiche su iPhone, apri l'app dall'icona in schermata Home (non dal browser).";
+    btn.classList.add("hide"); return;
+  }
+  btn.classList.remove("hide");
+  const reg=await navigator.serviceWorker.ready;
+  const sub=await reg.pushManager.getSubscription();
+  if(Notification.permission==="granted" && sub){
+    st.textContent="✅ Notifiche attive su questo dispositivo.";
+    btn.textContent="Disattiva su questo dispositivo";
+    btn.dataset.on="1";
+  }else{
+    st.textContent="Notifiche non attive su questo dispositivo.";
+    btn.textContent="Attiva notifiche su questo dispositivo";
+    btn.dataset.on="";
+  }
+  hint.textContent = isIOS ? "Su iPhone gli avvisi arrivano solo con l'app aperta almeno una volta e le notifiche consentite." : "";
+}
+
+async function togglePush(){
+  const btn=$("#pushBtn");
+  const reg=await navigator.serviceWorker.ready;
+  if(btn.dataset.on){
+    // disattiva
+    const sub=await reg.pushManager.getSubscription();
+    if(sub){ try{ await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); }catch(e){} await sub.unsubscribe(); }
+    toast("Notifiche disattivate"); renderPushState(); return;
+  }
+  if(VAPID_PUBLIC_KEY.startsWith("INCOLLA")){ toast("Chiave VAPID non configurata"); return; }
+  const perm=await Notification.requestPermission();
+  if(perm!=="granted"){ toast("Permesso negato"); renderPushState(); return; }
+  let sub;
+  try{
+    sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:urlB64ToUint8Array(VAPID_PUBLIC_KEY) });
+  }catch(e){ toast("Errore attivazione: "+e.message); return; }
+  const json=sub.toJSON();
+  const { data:{ user } } = await sb.auth.getUser();
+  const { error } = await sb.from("push_subscriptions").upsert({
+    user_id: user.id, client_id: CLIENT ? CLIENT.id : null,
+    endpoint: json.endpoint, subscription: json
+  }, { onConflict:"endpoint" });
+  if(error){ toast("Errore salvataggio: "+error.message); return; }
+  toast("Notifiche attivate"); renderPushState();
+}
+document.getElementById("pushBtn").addEventListener("click", togglePush);
 
 /* =====================================================================
    AVVIO
