@@ -112,6 +112,8 @@ input,select{font-family:inherit}
 .bk-time{font-size:22px; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
 .bk-time .notime{font-size:15px; font-weight:600; color:var(--muted)}
 .bk-name{font-weight:700; font-size:16px; margin:2px 0 0}
+.bk-name-link{cursor:pointer; text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:3px; text-decoration-color:var(--line); transition:text-decoration-color .15s, color .15s}
+.bk-name-link:hover{color:var(--spark); text-decoration-color:var(--spark)}
 .bk-meta{display:flex; flex-wrap:wrap; gap:6px 14px; color:var(--muted); font-size:13.5px; margin-top:6px}
 .bk-meta b{color:var(--ink); font-weight:600}
 .status{font-size:12px; font-weight:700; padding:5px 10px; border-radius:999px; white-space:nowrap}
@@ -638,7 +640,9 @@ function bookingCard(b){
         <span class="pick" aria-hidden="true"></span>
         <div>
           <div class="bk-time">${time}</div>
-          <div class="bk-name">${esc(b.customer_name)}</div>
+          ${ waDigits(b.customer_phone)
+            ? `<div class="bk-name bk-name-link" data-custdetail="1" data-phone="${esc(b.customer_phone)}" data-name="${esc(b.customer_name)}" title="Vedi storico cliente">${esc(b.customer_name)}</div>`
+            : `<div class="bk-name">${esc(b.customer_name)}</div>` }
         </div>
       </div>
       <span class="status ${b.status}">${STATUS_LABEL[b.status]}</span>
@@ -661,6 +665,9 @@ $("#bookingsList").addEventListener("click", async e=>{
     else { SELECTED.add(id); card.classList.add("picked"); }
     updateBulkBar(); return;
   }
+  // clic sul nome -> storico/dettaglio cliente (riusa la stessa vista della tab Storico)
+  const nameEl = e.target.closest("[data-custdetail]");
+  if(nameEl){ loadCustomerDetail(nameEl.dataset.phone, nameEl.dataset.name); return; }
   // tap sul link "Invia conferma WhatsApp" (conferma singola) -> lascia aprire WhatsApp, poi ricarica
   const waC = e.target.closest("[data-waconfirm]");
   if(waC){ setTimeout(loadBookings, 1200); return; }
@@ -802,12 +809,34 @@ $("#historyList").addEventListener("click", e=>{
 });
 
 async function loadCustomerDetail(phone, name){
-  const list=$("#historyList"); list.innerHTML='<div class="loading">Carico…</div>';
-  const { data, error } = await sb.from("bookings")
+  if(!phone || !waDigits(phone)){ toast("Nessuno storico disponibile"); return; }
+  const back=document.createElement("div");
+  back.className="modal-back"; back.id="custDetailBack";
+  back.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <h3 style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(name)}</h3>
+        <button class="modal-x" id="cdClose">Chiudi</button>
+      </div>
+      <div class="modal-body" id="cdBody"><div class="loading">Carico…</div></div>
+    </div>`;
+  document.body.appendChild(back);
+  const close=()=>back.remove();
+  back.querySelector("#cdClose").addEventListener("click", close);
+  back.addEventListener("click", e=>{ if(e.target===back) close(); });
+
+  // scoping: super admin filtra sul cliente in vista; il titolare è già limitato dalla RLS,
+  // ma filtriamo comunque per client_id per sicurezza. Mai clienti finali di altre attività.
+  const scopeId = ADMIN_CLIENT ? ADMIN_CLIENT.id : (CLIENT ? CLIENT.id : null);
+  let q = sb.from("bookings")
     .select("booking_date,booking_time,party_size,notes,booking_types(label)")
     .eq("customer_phone", phone).eq("status","confermata")
     .order("booking_date",{ascending:false}).order("booking_time",{ascending:false,nullsFirst:false});
-  if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
+  if(scopeId) q=q.eq("client_id", scopeId);
+  const { data, error } = await q;
+
+  const body=back.querySelector("#cdBody");
+  if(error){ body.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
   const items=(data||[]).map(b=>`
     <div class="bk">
       <div class="bk-top">
@@ -823,14 +852,12 @@ async function loadCustomerDetail(phone, name){
         ${b.notes?`<span style="flex-basis:100%">✎ ${esc(b.notes)}</span>`:""}
       </div>
     </div>`).join("");
-  list.innerHTML = `
-    <button class="chip" id="histBack" style="margin-bottom:14px">← Torna allo storico</button>
-    <div class="card" style="margin-bottom:14px">
-      <h3 style="margin:0 0 2px">${esc(name)}</h3>
-      <p style="margin:0"><a href="${waLink(phone)}" target="_blank" rel="noopener" style="color:var(--muted)">${esc(phone)}</a> · ${data.length} ${data.length==1?"visita confermata":"visite confermate"}</p>
-    </div>
+  body.innerHTML = `
+    <p style="margin:0 0 14px; color:var(--muted); font-size:14px">
+      <a href="${waLink(phone)}" target="_blank" rel="noopener" style="color:var(--muted)">${esc(phone)}</a>
+      · ${data.length} ${data.length==1?"visita confermata":"visite confermate"}
+    </p>
     ${items || '<div class="empty">Nessuna visita confermata.</div>'}`;
-  $("#histBack").addEventListener("click",()=>renderHistory($("#histSearch").value.trim().toLowerCase()));
 }
 
 /* =====================================================================
