@@ -333,9 +333,12 @@ input,select{font-family:inherit}
 
   <!-- SUPER ADMIN -->
   <main id="tab-admin" class="wrap hide">
-    <div class="card" style="margin-bottom:16px">
-      <h3>Stato attività</h3>
-      <p>Sospendi o riattiva un cliente. Un cliente sospeso non può accedere e il suo form di prenotazione è disattivato. (In futuro lo gestirà Stripe.)</p>
+    <div class="card" style="margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap">
+      <div>
+        <h3 style="margin:0 0 4px">Attività</h3>
+        <p style="margin:0">Sospendi/riattiva un cliente o creane uno nuovo. Un cliente sospeso non accede e il suo form è disattivato.</p>
+      </div>
+      <button class="btn" id="newClientBtn" style="width:auto; padding:12px 18px; white-space:nowrap">+ Nuovo cliente</button>
     </div>
     <div id="adminList"><div class="loading">Carico…</div></div>
   </main>
@@ -384,7 +387,7 @@ input,select{font-family:inherit}
 const SUPABASE_URL      = "https://qorswaabqqcxpsmngbpo.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_xoKJtS9w_kv_dddgGl8Ycg_BC2UM0w6";
 // Chiave PUBBLICA VAPID (generata con vapid-gen.html) — è pubblica, va bene qui.
-const VAPID_PUBLIC_KEY  = "BHzOjm_hlNTO6sVR4H1BA23hzVVYO_MeVwyXeQwQNNeHSsRe6idQ2fqQNNtodQtiWJdrTAdu9XXaIxGZhYYImH0";
+const VAPID_PUBLIC_KEY  = "INCOLLA_LA_TUA_VAPID_PUBLIC_KEY";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -942,6 +945,149 @@ $("#adminList").addEventListener("click", async e=>{
   if(error){ toast("Errore: "+error.message); return; }
   toast(next==="attivo"?"Attività riattivata":"Attività sospesa"); loadAdmin();
 });
+
+/* =====================================================================
+   NUOVO CLIENTE (onboarding) — super admin
+   ===================================================================== */
+function slugify(s){ return (s||"").toString().trim().toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  .replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,""); }
+const DAYS = [["1","Lun"],["2","Mar"],["3","Mer"],["4","Gio"],["5","Ven"],["6","Sab"],["7","Dom"]];
+
+document.getElementById("newClientBtn").addEventListener("click", openNewClient);
+
+function btRowHtml(){
+  return `<div class="bt-row card" style="padding:14px; margin-bottom:10px">
+    <div class="mfield"><label>Nome tipo</label><input class="input bt-label" placeholder="Es. Tavolo pranzo" /></div>
+    <div class="mfield"><label>Giorni</label><div class="bt-days" style="display:flex; gap:6px; flex-wrap:wrap">
+      ${DAYS.map(d=>`<button type="button" class="chip on bt-day" data-day="${d[0]}">${d[1]}</button>`).join("")}
+    </div></div>
+    <div class="mrow">
+      <div class="mfield"><label>Dalle</label><input type="time" class="input bt-from" value="12:00" /></div>
+      <div class="mfield"><label>Alle</label><input type="time" class="input bt-to" value="15:00" /></div>
+    </div>
+    <div class="mrow">
+      <div class="mfield"><label>Durata slot (min)</label><input type="number" class="input bt-slot" value="30" /></div>
+      <div class="mfield"><label>Max persone</label><input type="number" class="input bt-max" value="20" /></div>
+    </div>
+    <div class="mfield"><label>Capienza coperti/giorno <span style="color:var(--muted);font-weight:400">(facoltativa)</span></label><input type="number" class="input bt-cap" placeholder="Es. 100" /></div>
+    <button type="button" class="chip bt-remove" style="border-color:var(--stop-line); color:var(--stop)">Rimuovi tipo</button>
+  </div>`;
+}
+
+function openNewClient(){
+  const back=document.createElement("div");
+  back.className="modal-back"; back.id="ncBack";
+  back.innerHTML = `
+    <div class="modal">
+      <div class="modal-head"><h3>Nuovo cliente</h3><button class="modal-x" id="ncClose">✕</button></div>
+      <div class="modal-body">
+        <div id="ncMsg" class="msg"></div>
+        <div class="mfield"><label>Nome attività</label><input id="ncName" class="input" placeholder="Es. Bar Centrale" /></div>
+        <div class="mfield"><label>Slug (identificativo per il sito)</label><input id="ncSlug" class="input" placeholder="bar-centrale" /></div>
+        <div class="mfield"><label>Telefono WhatsApp</label><input id="ncPhone" class="input" placeholder="+39..." /></div>
+
+        <h3 style="font-size:14px; margin:18px 0 8px">Colori del form</h3>
+        <div class="mrow">
+          <div class="mfield"><label>Primario</label><input id="ncPrimary" type="color" class="input" value="#006875" style="height:46px; padding:4px" /></div>
+          <div class="mfield"><label>Secondario</label><input id="ncSecondary" type="color" class="input" value="#D9D2CA" style="height:46px; padding:4px" /></div>
+        </div>
+        <div class="mrow">
+          <div class="mfield"><label>Accento</label><input id="ncAccent" type="color" class="input" value="#FF6B5A" style="height:46px; padding:4px" /></div>
+          <div class="mfield"><label>Font</label><input id="ncFont" class="input" value="Poppins" /></div>
+        </div>
+
+        <h3 style="font-size:14px; margin:18px 0 8px">Tipi di prenotazione</h3>
+        <div id="ncTypes">${btRowHtml()}</div>
+        <button type="button" class="chip" id="ncAddType">+ Aggiungi tipo</button>
+
+        <h3 style="font-size:14px; margin:18px 0 8px">Moduli attivi</h3>
+        <div style="display:flex; gap:6px; flex-wrap:wrap" id="ncMods">
+          ${[["prenotazioni","Prenotazioni"],["storico","Storico"],["impostazioni","Impostazioni"]]
+            .map(m=>`<button type="button" class="chip on nc-mod" data-mod="${m[0]}">${m[1]}</button>`).join("")}
+        </div>
+
+        <h3 style="font-size:14px; margin:18px 0 8px">Accesso del titolare</h3>
+        <div class="mfield"><label>Email</label><input id="ncEmail" type="email" class="input" placeholder="titolare@esempio.it" /></div>
+        <div class="mfield"><label>Password</label><input id="ncPass" class="input" placeholder="min 8 caratteri" /></div>
+
+        <button class="btn" id="ncSave" style="margin-top:8px">Crea cliente</button>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  const close=()=>back.remove();
+  back.querySelector("#ncClose").addEventListener("click", close);
+  back.addEventListener("click", e=>{ if(e.target===back) close(); });
+  // slug auto dal nome
+  back.querySelector("#ncName").addEventListener("input", e=>{
+    const s=back.querySelector("#ncSlug"); if(!s.dataset.touched) s.value=slugify(e.target.value);
+  });
+  back.querySelector("#ncSlug").addEventListener("input", e=>{ e.target.dataset.touched="1"; e.target.value=slugify(e.target.value); });
+  // toggle giorni / moduli
+  back.addEventListener("click", e=>{
+    const t=e.target.closest(".bt-day, .nc-mod"); if(t){ t.classList.toggle("on"); }
+    if(e.target.closest("#ncAddType")){ back.querySelector("#ncTypes").insertAdjacentHTML("beforeend", btRowHtml()); }
+    const rm=e.target.closest(".bt-remove");
+    if(rm){ const rows=back.querySelectorAll(".bt-row"); if(rows.length>1) rm.closest(".bt-row").remove(); else toast("Serve almeno un tipo"); }
+  });
+  back.querySelector("#ncSave").addEventListener("click", ()=>saveNewClient(back, close));
+}
+
+async function saveNewClient(back, close){
+  const msg=back.querySelector("#ncMsg"); msg.className="msg";
+  const fail=t=>{ msg.className="msg err"; msg.textContent=t; back.querySelector(".modal-body").scrollTop=0; };
+  const name=back.querySelector("#ncName").value.trim();
+  const slug=slugify(back.querySelector("#ncSlug").value);
+  const phone=back.querySelector("#ncPhone").value.trim();
+  const email=back.querySelector("#ncEmail").value.trim();
+  const pass=back.querySelector("#ncPass").value;
+  if(!name) return fail("Inserisci il nome attività.");
+  if(!slug) return fail("Inserisci lo slug.");
+  if(!email) return fail("Inserisci l'email del titolare.");
+  if(!pass || pass.length<8) return fail("La password deve avere almeno 8 caratteri.");
+
+  const branding={
+    primary: back.querySelector("#ncPrimary").value,
+    secondary: back.querySelector("#ncSecondary").value,
+    accent: back.querySelector("#ncAccent").value,
+    font: back.querySelector("#ncFont").value.trim() || "Inter"
+  };
+  const modules=[...back.querySelectorAll(".nc-mod.on")].map(b=>b.dataset.mod);
+
+  const booking_types=[];
+  for(const row of back.querySelectorAll(".bt-row")){
+    const label=row.querySelector(".bt-label").value.trim();
+    if(!label) continue;
+    const days=[...row.querySelectorAll(".bt-day.on")].map(b=>parseInt(b.dataset.day,10));
+    if(!days.length) return fail(`Scegli almeno un giorno per "${label}".`);
+    const cap=parseInt(row.querySelector(".bt-cap").value,10);
+    const rules={
+      weekdays: days,
+      time_from: row.querySelector(".bt-from").value || "12:00",
+      time_to: row.querySelector(".bt-to").value || "15:00",
+      slot_minutes: parseInt(row.querySelector(".bt-slot").value,10)||30,
+      min_party: 1,
+      max_party: parseInt(row.querySelector(".bt-max").value,10)||20,
+      advance_days: 45,
+      lead_hours: 1
+    };
+    if(!isNaN(cap) && cap>0) rules.capacity=cap;
+    booking_types.push({ key: slugify(label), label, rules });
+  }
+  if(!booking_types.length) return fail("Aggiungi almeno un tipo di prenotazione con nome.");
+
+  const btn=back.querySelector("#ncSave"); btn.disabled=true; btn.textContent="Creo…";
+  const { data, error } = await sb.functions.invoke("create_tenant", {
+    body: { name, slug, phone, branding, booking_types, modules, owner_email: email, owner_password: pass }
+  });
+  btn.disabled=false; btn.textContent="Crea cliente";
+
+  if(error){ return fail("Errore: "+error.message); }
+  if(!data || !data.ok){ return fail(data && data.error ? data.error : "Creazione non riuscita."); }
+  close();
+  toast("Cliente creato");
+  loadAdmin();
+}
 
 // Super admin: gestione prenotazioni di un singolo cliente
 function openClientBookings(id, name){
