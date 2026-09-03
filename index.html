@@ -184,6 +184,8 @@ input,select{font-family:inherit}
 .admin-row{display:flex; align-items:center; justify-content:space-between; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:13px 14px; margin-bottom:9px; box-shadow:var(--sh)}
 .admin-row .a-name{font-weight:700}
 .admin-row .a-slug{color:var(--muted); font-size:12.5px; margin-top:1px}
+.cat-chips{display:flex; gap:6px; flex-wrap:wrap; margin-top:6px}
+.cat-chip{font-size:11px; font-weight:600; color:var(--muted); background:var(--paper); border:1px solid var(--line); border-radius:999px; padding:2px 9px}
 .toggle{padding:9px 14px; border-radius:10px; font-weight:600; font-size:13.5px; border:1px solid var(--line)}
 .toggle.attivo{background:var(--ok-bg); color:var(--ok); border-color:var(--ok-line)}
 .toggle.sospeso{background:var(--stop-bg); color:var(--stop); border-color:var(--stop-line)}
@@ -338,8 +340,12 @@ input,select{font-family:inherit}
         <h3 style="margin:0 0 4px">Attività</h3>
         <p style="margin:0">Sospendi/riattiva un cliente o creane uno nuovo. Un cliente sospeso non accede e il suo form è disattivato.</p>
       </div>
-      <button class="btn" id="newClientBtn" style="width:auto; padding:12px 18px; white-space:nowrap">+ Nuovo cliente</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="chip" id="manageCatBtn" style="align-self:center">Categorie</button>
+        <button class="btn" id="newClientBtn" style="width:auto; padding:12px 18px; white-space:nowrap">+ Nuovo cliente</button>
+      </div>
     </div>
+    <div id="catFilter" class="filters" style="margin-bottom:14px"></div>
     <div id="adminList"><div class="loading">Carico…</div></div>
   </main>
 </div>
@@ -387,7 +393,8 @@ input,select{font-family:inherit}
 const SUPABASE_URL      = "https://qorswaabqqcxpsmngbpo.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_xoKJtS9w_kv_dddgGl8Ycg_BC2UM0w6";
 // Chiave PUBBLICA VAPID (generata con vapid-gen.html) — è pubblica, va bene qui.
-const VAPID_PUBLIC_KEY  = "BHzOjm_hlNTO6sVR4H1BA23hzVVYO_MeVwyXeQwQNNeHSsRe6idQ2fqQNNtodQtiWJdrTAdu9XXaIxGZhYYImH0";
+const VAPID_PUBLIC_KEY  = "BHzOjm_hlNTO6sVR4H1BA23hzVVYO_MeVwyXeQwQNNeHSsRe6idQ2fqQNNtodQtiWJdrTAdu9XXaIxGZhYYImH0
+";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -921,22 +928,54 @@ $("#logoInput").addEventListener("change", async e=>{
 /* =====================================================================
    SUPER ADMIN — stato attività (gancio manuale, poi Stripe)
    ===================================================================== */
+let CATEGORIES = [];       // elenco categorie
+let CLIENT_CATS = {};      // client_id -> [category_id]
+let CAT_FILTER = "";       // categoria selezionata nel filtro (id) o ""
+
 async function loadAdmin(){
   const list=$("#adminList"); list.innerHTML='<div class="loading">Carico…</div>';
-  const { data, error } = await sb.from("clients").select("id,name,slug,status").order("name");
-  if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
-  list.innerHTML = data.map(c=>`
+  const [cats, links, clients] = await Promise.all([
+    sb.from("categories").select("id,name").order("sort_order").order("name"),
+    sb.from("client_categories").select("client_id,category_id"),
+    sb.from("clients").select("id,name,slug,status").order("name")
+  ]);
+  if(clients.error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
+  CATEGORIES = cats.data || [];
+  CLIENT_CATS = {};
+  (links.data||[]).forEach(l=>{ (CLIENT_CATS[l.client_id] ||= []).push(l.category_id); });
+  const catName = id => (CATEGORIES.find(c=>c.id===id)||{}).name || "";
+
+  // barra filtro categorie
+  $("#catFilter").innerHTML = CATEGORIES.length ? (
+    `<button class="chip ${CAT_FILTER===""?"on":""}" data-catf="">Tutte</button>` +
+    CATEGORIES.map(c=>`<button class="chip ${CAT_FILTER===c.id?"on":""}" data-catf="${c.id}">${esc(c.name)}</button>`).join("")
+  ) : "";
+
+  let rows = clients.data;
+  if(CAT_FILTER) rows = rows.filter(c => (CLIENT_CATS[c.id]||[]).includes(CAT_FILTER));
+
+  list.innerHTML = rows.map(c=>{
+    const chips = (CLIENT_CATS[c.id]||[]).map(id=>`<span class="cat-chip">${esc(catName(id))}</span>`).join("");
+    return `
     <div class="admin-row">
-      <div><div class="a-name">${esc(c.name)}</div><div class="a-slug">${esc(c.slug)}</div></div>
+      <div style="min-width:0">
+        <div class="a-name">${esc(c.name)}</div>
+        <div class="a-slug">${esc(c.slug)}</div>
+        ${chips?`<div class="cat-chips">${chips}</div>`:""}
+      </div>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end">
         <button class="toggle ${c.status}" data-id="${c.id}" data-status="${c.status}">${c.status==="attivo"?"Attivo":"Sospeso"}</button>
+        <button class="chip" data-cat="${c.id}" data-name="${esc(c.name)}">Categorie</button>
         <button class="chip" data-view="${c.id}" data-name="${esc(c.name)}">Vedi prenotazioni →</button>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("") || `<div class="empty">Nessun cliente in questa categoria.</div>`;
 }
 $("#adminList").addEventListener("click", async e=>{
   const view=e.target.closest("[data-view]");
   if(view){ openClientBookings(view.dataset.view, view.dataset.name); return; }
+  const cat=e.target.closest("[data-cat]");
+  if(cat){ openAssignCats(cat.dataset.cat, cat.dataset.name); return; }
   const btn=e.target.closest(".toggle"); if(!btn) return;
   const next = btn.dataset.status==="attivo" ? "sospeso" : "attivo";
   btn.disabled=true;
@@ -945,6 +984,86 @@ $("#adminList").addEventListener("click", async e=>{
   if(error){ toast("Errore: "+error.message); return; }
   toast(next==="attivo"?"Attività riattivata":"Attività sospesa"); loadAdmin();
 });
+
+// filtro per categoria
+$("#catFilter").addEventListener("click", e=>{
+  const b=e.target.closest("[data-catf]"); if(!b) return;
+  CAT_FILTER = b.dataset.catf; loadAdmin();
+});
+
+// gestione elenco categorie (crea / elimina)
+document.getElementById("manageCatBtn").addEventListener("click", openManageCats);
+function openManageCats(){
+  const back=document.createElement("div"); back.className="modal-back";
+  back.innerHTML=`
+    <div class="modal">
+      <div class="modal-head"><h3>Categorie di attività</h3><button class="modal-x" id="mcClose">✕</button></div>
+      <div class="modal-body">
+        <div class="mfield" style="display:flex; gap:8px">
+          <input id="mcNew" class="input" placeholder="Nuova categoria (es. Parrucchieri)" />
+          <button class="btn" id="mcAdd" style="width:auto; padding:0 18px; white-space:nowrap">Aggiungi</button>
+        </div>
+        <div id="mcList" style="margin-top:8px"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  const close=()=>{ back.remove(); loadAdmin(); };
+  back.querySelector("#mcClose").addEventListener("click", close);
+  back.addEventListener("click", e=>{ if(e.target===back) close(); });
+  async function refresh(){
+    const { data } = await sb.from("categories").select("id,name").order("sort_order").order("name");
+    CATEGORIES = data||[];
+    back.querySelector("#mcList").innerHTML = CATEGORIES.length
+      ? CATEGORIES.map(c=>`<div class="admin-row"><div class="a-name">${esc(c.name)}</div><button class="chip" data-del="${c.id}" style="border-color:var(--stop-line); color:var(--stop)">Elimina</button></div>`).join("")
+      : `<div class="empty" style="padding:20px">Nessuna categoria. Creane una.</div>`;
+  }
+  back.querySelector("#mcAdd").addEventListener("click", async ()=>{
+    const name=back.querySelector("#mcNew").value.trim(); if(!name) return;
+    const { error } = await sb.from("categories").insert({ name, sort_order: CATEGORIES.length });
+    if(error){ toast("Errore: "+error.message); return; }
+    back.querySelector("#mcNew").value=""; refresh();
+  });
+  back.querySelector("#mcList").addEventListener("click", async e=>{
+    const d=e.target.closest("[data-del]"); if(!d) return;
+    if(!confirm("Eliminare questa categoria? Verrà tolta da tutti i clienti a cui è assegnata.")) return;
+    const { error } = await sb.from("categories").delete().eq("id", d.dataset.del);
+    if(error){ toast("Errore: "+error.message); return; }
+    refresh();
+  });
+  refresh();
+}
+
+// assegna categorie a un cliente
+function openAssignCats(clientId, clientName){
+  const current = new Set(CLIENT_CATS[clientId]||[]);
+  const back=document.createElement("div"); back.className="modal-back";
+  back.innerHTML=`
+    <div class="modal">
+      <div class="modal-head"><h3>Categorie · ${esc(clientName)}</h3><button class="modal-x" id="acClose">✕</button></div>
+      <div class="modal-body">
+        ${CATEGORIES.length ? `<div style="display:flex; gap:8px; flex-wrap:wrap" id="acList">
+          ${CATEGORIES.map(c=>`<button type="button" class="chip ${current.has(c.id)?"on":""} ac-opt" data-id="${c.id}">${esc(c.name)}</button>`).join("")}
+        </div>` : `<div class="empty" style="padding:16px">Nessuna categoria. Creane prima con "Categorie".</div>`}
+        <button class="btn" id="acSave" style="margin-top:16px">Salva</button>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  const close=()=>back.remove();
+  back.querySelector("#acClose").addEventListener("click", close);
+  back.addEventListener("click", e=>{ if(e.target===back) close(); });
+  back.addEventListener("click", e=>{ const o=e.target.closest(".ac-opt"); if(o) o.classList.toggle("on"); });
+  back.querySelector("#acSave").addEventListener("click", async ()=>{
+    const chosen = [...back.querySelectorAll(".ac-opt.on")].map(b=>b.dataset.id);
+    // riscrive le assegnazioni: cancella e reinserisce
+    await sb.from("client_categories").delete().eq("client_id", clientId);
+    if(chosen.length){
+      const rows = chosen.map(cid=>({ client_id: clientId, category_id: cid }));
+      const { error } = await sb.from("client_categories").insert(rows);
+      if(error){ toast("Errore: "+error.message); return; }
+    }
+    close(); toast("Categorie aggiornate"); loadAdmin();
+  });
+}
 
 /* =====================================================================
    NUOVO CLIENTE (onboarding) — super admin
