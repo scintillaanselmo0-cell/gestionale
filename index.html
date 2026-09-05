@@ -315,6 +315,7 @@ input,select{font-family:inherit}
 
   <!-- SERVIZI -->
   <main id="tab-services" class="wrap hide">
+    <div id="svcCatFilter" class="filters"></div>
     <div class="filters">
       <input id="svcSearch" class="input" style="max-width:280px" placeholder="Cerca servizio…" />
       <button class="chip" id="addSvcBtn" style="background:var(--ink);color:#fff;border-color:var(--ink); margin-left:auto">+ Aggiungi servizio</button>
@@ -407,6 +408,15 @@ input,select{font-family:inherit}
     <div class="modal-body">
       <div id="svcMsg" class="msg"></div>
       <div class="mfield"><label>Nome servizio</label><input id="sName" class="input" placeholder="Es. Taglio uomo" /></div>
+      <div class="mfield"><label>Sezione</label>
+        <select id="sCat" class="input">
+          <option value="">— nessuna —</option>
+          <option>Hair Spa</option>
+          <option>Estetica</option>
+          <option>Barbiere</option>
+          <option>Parrucchiere</option>
+        </select>
+      </div>
       <div class="mrow">
         <div class="mfield"><label>Prezzo (€)</label><input id="sPrice" type="number" min="0" step="0.5" class="input" placeholder="25" /></div>
         <div class="mfield"><label>Durata (min)</label><input id="sDur" type="number" min="5" step="5" class="input" placeholder="30" /></div>
@@ -1665,19 +1675,28 @@ $("#custDelete").addEventListener("click", async ()=>{
 /* =====================================================================
    SERVIZI (editor prezzi/durate)
    ===================================================================== */
-let SERVICES_ROWS=[];
+let SERVICES_ROWS=[], SVC_CAT="tutte";
 function svcScopeId(){ return ADMIN_CLIENT ? ADMIN_CLIENT.id : (CLIENT ? CLIENT.id : null); }
 async function loadServices(){
   const list=$("#servicesList"); list.innerHTML='<div class="loading">Carico…</div>';
-  let q=sb.from("services").select("id,key,name,price_cents,duration_min,buffer_min,active,sort_order").order("sort_order").order("name");
+  let q=sb.from("services").select("id,key,name,price_cents,duration_min,buffer_min,active,sort_order,category").order("sort_order").order("name");
   if(ADMIN_CLIENT) q=q.eq("client_id",ADMIN_CLIENT.id);
   const { data, error } = await q;
   if(error){ list.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
-  SERVICES_ROWS=data||[]; renderServices();
+  SERVICES_ROWS=data||[];
+  // barra sezioni (dalle categorie presenti)
+  const cats=[...new Set(SERVICES_ROWS.map(s=>s.category).filter(Boolean))].sort();
+  $("#svcCatFilter").innerHTML = cats.length ? (
+    `<button class="chip ${SVC_CAT==="tutte"?"on":""}" data-svcat="tutte">Tutte</button>`+
+    cats.map(c=>`<button class="chip ${SVC_CAT===c?"on":""}" data-svcat="${esc(c)}">${esc(c)}</button>`).join("")+
+    (SERVICES_ROWS.some(s=>!s.category)?`<button class="chip ${SVC_CAT==="(nessuna)"?"on":""}" data-svcat="(nessuna)">Senza sezione</button>`:"")
+  ) : "";
+  renderServices();
 }
 function renderServices(){
   const term=$("#svcSearch").value.trim().toLowerCase();
   let rows=SERVICES_ROWS;
+  if(SVC_CAT!=="tutte") rows=rows.filter(s=> SVC_CAT==="(nessuna)" ? !s.category : s.category===SVC_CAT);
   if(term) rows=rows.filter(s=>(s.name||"").toLowerCase().includes(term));
   const list=$("#servicesList");
   if(!rows.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>${SERVICES_ROWS.length?"Nessun risultato.":"Ancora nessun servizio. Aggiungine uno."}</div>`; return; }
@@ -1685,11 +1704,12 @@ function renderServices(){
     <div class="hist" data-svc="${s.id}" style="cursor:pointer">
       <div class="who">
         <b>${esc(s.name)}</b>
-        <div>${s.duration_min?`${s.duration_min} min`:""}${s.buffer_min?` +${s.buffer_min} pausa`:""}${!s.active?" · non attivo":""}</div>
+        <div>${s.category?esc(s.category)+" · ":""}${s.duration_min?`${s.duration_min} min`:""}${!s.active?" · non attivo":""}</div>
       </div>
       <div class="visits"><div class="n" style="color:var(--ink)">${s.price_cents!=null?euro(s.price_cents):"—"}</div><div class="l">prezzo</div></div>
     </div>`).join("");
 }
+$("#svcCatFilter").addEventListener("click", e=>{ const b=e.target.closest("[data-svcat]"); if(!b) return; SVC_CAT=b.dataset.svcat; loadServices(); });
 $("#svcSearch").addEventListener("input", renderServices);
 $("#servicesList").addEventListener("click", e=>{ const r=e.target.closest("[data-svc]"); if(r) openService(SERVICES_ROWS.find(s=>s.id===r.dataset.svc)); });
 $("#addSvcBtn").addEventListener("click", ()=>openService(null));
@@ -1699,6 +1719,7 @@ function openService(s){
   $("#svcMsg").className="msg";
   $("#svcModalTitle").textContent = s ? "Modifica servizio" : "Nuovo servizio";
   $("#sName").value = s?.name || "";
+  $("#sCat").value = s?.category || "";
   $("#sPrice").value = (s && s.price_cents!=null) ? (s.price_cents/100) : "";
   $("#sDur").value = s?.duration_min || 30;
   $("#sBuf").value = s?.buffer_min || 0;
@@ -1717,7 +1738,8 @@ $("#svcSave").addEventListener("click", async ()=>{
   if(!name){ m.className="msg err"; m.textContent="Inserisci il nome del servizio."; return; }
   const price = $("#sPrice").value===""?null:Math.round(parseFloat($("#sPrice").value)*100);
   const rec={ name, price_cents: (price!=null && !isNaN(price))?price:null,
-              duration_min: parseInt($("#sDur").value,10)||30, buffer_min: parseInt($("#sBuf").value,10)||0,
+              category: $("#sCat").value || null,
+              duration_min: parseInt($("#sDur").value,10)||20, buffer_min: parseInt($("#sBuf").value,10)||0,
               active: $("#sActive").checked };
   const id=$("#svcSave").dataset.id;
   $("#svcSave").disabled=true;
