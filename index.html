@@ -259,6 +259,7 @@ input,select{font-family:inherit}
   <nav class="tabs">
     <button class="tab on" data-tab="bookings" data-mod="prenotazioni">Prenotazioni<span id="bkBadge" class="tab-badge hide"></span></button>
     <button class="tab" data-tab="history" data-mod="storico">Storico</button>
+    <button class="tab" data-tab="customers" data-mod="clienti">Clienti</button>
     <button class="tab" data-tab="vouchers" data-mod="voucher">Voucher</button>
     <button class="tab" data-tab="settings" data-mod="impostazioni">Impostazioni</button>
     <button class="tab hide" id="adminTabBtn" data-tab="admin">Admin</button>
@@ -298,6 +299,16 @@ input,select{font-family:inherit}
       <input id="histSearch" class="input" style="max-width:280px" placeholder="Cerca per nome o telefono…" />
     </div>
     <div id="historyList"><div class="loading">Carico…</div></div>
+  </main>
+
+  <!-- CLIENTI -->
+  <main id="tab-customers" class="wrap hide">
+    <div class="filters">
+      <input id="custSearch" class="input" style="max-width:280px" placeholder="Cerca nome, telefono, email…" />
+      <button class="chip" id="addCustBtn" style="background:var(--ink);color:#fff;border-color:var(--ink); margin-left:auto">+ Aggiungi cliente</button>
+    </div>
+    <div id="custCount" style="font-size:13px; color:var(--muted); margin-bottom:10px"></div>
+    <div id="customersList"><div class="loading">Carico…</div></div>
   </main>
 
   <!-- VOUCHER -->
@@ -364,6 +375,31 @@ input,select{font-family:inherit}
 
 <div id="toast" class="toast"></div>
 
+<!-- MODALE: cliente (aggiungi/modifica) -->
+<div id="custModal" class="modal-back hide">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="custModalTitle">Cliente</h3>
+      <button class="modal-x" id="custClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="custMsg" class="msg"></div>
+      <div class="mfield"><label>Nome</label><input id="cName" class="input" placeholder="Mario Rossi" /></div>
+      <div class="mrow">
+        <div class="mfield"><label>Telefono</label><input id="cPhone" type="tel" class="input" placeholder="350 000 0000" /></div>
+        <div class="mfield"><label>Email</label><input id="cEmail" type="email" class="input" placeholder="mario@esempio.it" /></div>
+      </div>
+      <div class="mfield"><label>Città <span style="color:var(--muted);font-weight:400">(facolt.)</span></label><input id="cCity" class="input" /></div>
+      <div class="mfield"><label>Note <span style="color:var(--muted);font-weight:400">(facolt.)</span></label><input id="cNotes" class="input" /></div>
+      <div id="custHistory" style="margin-top:6px"></div>
+      <div style="display:flex; gap:10px; margin-top:12px">
+        <button class="btn" id="custSave" style="flex:1">Salva</button>
+        <button class="chip" id="custDelete" style="border-color:var(--stop-line); color:var(--stop); display:none">Elimina</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- MODALE: aggiungi prenotazione manuale (solo titolare) -->
 <div id="addModal" class="modal-back hide">
   <div class="modal">
@@ -405,7 +441,7 @@ input,select{font-family:inherit}
 const SUPABASE_URL      = "https://qorswaabqqcxpsmngbpo.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_xoKJtS9w_kv_dddgGl8Ycg_BC2UM0w6";
 // Chiave PUBBLICA VAPID (generata con vapid-gen.html) — è pubblica, va bene qui.
-const VAPID_PUBLIC_KEY  = "BHzOjm_hlNTO6sVR4H1BA23hzVVYO_MeVwyXeQwQNNeHSsRe6idQ2fqQNNtodQtiWJdrTAdu9XXaIxGZhYYImH0";
+const VAPID_PUBLIC_KEY  = "INCOLLA_LA_TUA_VAPID_PUBLIC_KEY";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -556,7 +592,7 @@ async function boot(){
   // --- TITOLARE: tab dinamiche dai moduli attivi ---
   const { data:mods } = await sb.from("client_modules").select("module_key,enabled").eq("client_id",CLIENT.id);
   let enabled = (mods||[]).filter(m=>m.enabled).map(m=>m.module_key);
-  if(!enabled.length) enabled = ["prenotazioni","storico","impostazioni"];   // default sensato
+  if(!enabled.length) enabled = ["prenotazioni","storico","clienti","impostazioni"];   // default sensato
   let firstTab = null;
   document.querySelectorAll('.tab[data-mod]').forEach(t=>{
     const on = enabled.includes(t.dataset.mod);
@@ -598,9 +634,10 @@ function switchTab(name){
   if(SELECT_MODE) exitSelect();
   if(name==="bookings") clearNewBadge();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
-  ["bookings","history","vouchers","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
+  ["bookings","history","customers","vouchers","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
   if(name==="bookings") loadBookings();
   if(name==="history")  loadHistory();
+  if(name==="customers") loadCustomers();
   if(name==="vouchers") loadVouchers();
   if(name==="settings") loadSettings();
   if(name==="admin")    loadAdmin();
@@ -1137,8 +1174,8 @@ function openNewClient(){
 
         <h3 style="font-size:14px; margin:18px 0 8px">Moduli attivi</h3>
         <div style="display:flex; gap:6px; flex-wrap:wrap" id="ncMods">
-          ${[["prenotazioni","Prenotazioni"],["storico","Storico"],["impostazioni","Impostazioni"]]
-            .map(m=>`<button type="button" class="chip on nc-mod" data-mod="${m[0]}">${m[1]}</button>`).join("")}
+          ${[["prenotazioni","Prenotazioni",true],["storico","Storico",true],["clienti","Clienti",true],["impostazioni","Impostazioni",true],["voucher","Voucher",false]]
+            .map(m=>`<button type="button" class="chip ${m[2]?"on ":""}nc-mod" data-mod="${m[0]}">${m[1]}</button>`).join("")}
         </div>
 
         <h3 style="font-size:14px; margin:18px 0 8px">Accesso del titolare</h3>
@@ -1470,6 +1507,84 @@ $("#vouchersList").addEventListener("click", async e=>{
   const { error } = await sb.from("vouchers").update(patch).eq("id", id);
   if(error){ toast("Errore, riprova"); (use||res).disabled=false; return; }
   toast(use?"Voucher segnato come usato":"Voucher riportato a valido"); loadVouchers();
+});
+
+/* =====================================================================
+   CLIENTI (anagrafica)
+   ===================================================================== */
+let CUSTOMERS=[];
+async function loadCustomers(){
+  const list=$("#customersList"); list.innerHTML='<div class="loading">Carico…</div>';
+  const { data, error } = await sb.from("customers")
+    .select("id,name,phone,email,city,notes")
+    .order("name",{ascending:true, nullsFirst:false}).limit(5000);
+  if(error){ list.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
+  CUSTOMERS=data||[]; renderCustomers();
+}
+function renderCustomers(){
+  const term=$("#custSearch").value.trim().toLowerCase();
+  let rows=CUSTOMERS;
+  if(term) rows=rows.filter(c=>((c.name||"")+" "+(c.phone||"")+" "+(c.email||"")).toLowerCase().includes(term));
+  $("#custCount").textContent = `${CUSTOMERS.length} clienti${term?` · ${rows.length} risultati`:""}`;
+  const list=$("#customersList");
+  if(!rows.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>${CUSTOMERS.length?"Nessun risultato.":"Ancora nessun cliente."}</div>`; return; }
+  rows=rows.slice(0,400);   // mostra i primi 400 (la ricerca restringe)
+  list.innerHTML = rows.map(c=>`
+    <div class="hist" data-cust="${c.id}" style="cursor:pointer">
+      <div class="who">
+        <b>${esc(c.name||"(senza nome)")}</b>
+        <div>${[c.phone,c.email,c.city].filter(Boolean).map(esc).join(" · ")||"—"}</div>
+      </div>
+      ${c.phone?`<a class="act wa" href="${waLink(c.phone)}" target="_blank" rel="noopener" data-wa="1" style="text-decoration:none">WhatsApp</a>`:""}
+    </div>`).join("") + (CUSTOMERS.length>400 && !term ? `<div class="empty" style="padding:16px">Mostro i primi 400 — usa la ricerca per trovare gli altri.</div>` : "");
+}
+$("#custSearch").addEventListener("input", renderCustomers);
+$("#customersList").addEventListener("click", e=>{
+  if(e.target.closest("[data-wa]")) return;
+  const row=e.target.closest("[data-cust]");
+  if(row) openCustomer(CUSTOMERS.find(c=>c.id===row.dataset.cust));
+});
+$("#addCustBtn").addEventListener("click", ()=>openCustomer(null));
+
+function openCustomer(c){
+  $("#custMsg").className="msg";
+  $("#custModalTitle").textContent = c ? "Modifica cliente" : "Nuovo cliente";
+  $("#cName").value  = c?.name  || "";
+  $("#cPhone").value = c?.phone || "";
+  $("#cEmail").value = c?.email || "";
+  $("#cCity").value  = c?.city  || "";
+  $("#cNotes").value = c?.notes || "";
+  $("#custDelete").style.display = c ? "inline-block" : "none";
+  $("#custDelete").dataset.id = c?.id || "";
+  $("#custSave").dataset.id = c?.id || "";
+  const h=$("#custHistory");
+  h.innerHTML = (c && c.phone) ? `<a id="custSeeHist" style="color:var(--spark); font-weight:600; cursor:pointer; font-size:14px">Vedi storico appuntamenti →</a>` : "";
+  if(c && c.phone){ h.querySelector("#custSeeHist").addEventListener("click", ()=>loadCustomerDetail(c.phone, c.name||"")); }
+  $("#custModal").classList.remove("hide");
+}
+$("#custClose").addEventListener("click", ()=>$("#custModal").classList.add("hide"));
+$("#custModal").addEventListener("click", e=>{ if(e.target.id==="custModal") $("#custModal").classList.add("hide"); });
+$("#custSave").addEventListener("click", async ()=>{
+  const m=$("#custMsg"); m.className="msg";
+  const name=$("#cName").value.trim();
+  if(!name && !$("#cPhone").value.trim()){ m.className="msg err"; m.textContent="Inserisci almeno nome o telefono."; return; }
+  const rec={ name: name||null, phone: $("#cPhone").value.trim()||null, email: $("#cEmail").value.trim()||null,
+              city: $("#cCity").value.trim()||null, notes: $("#cNotes").value.trim()||null };
+  const id=$("#custSave").dataset.id;
+  $("#custSave").disabled=true;
+  let error;
+  if(id){ ({error}=await sb.from("customers").update(rec).eq("id",id)); }
+  else  { rec.client_id=CLIENT.id; ({error}=await sb.from("customers").insert(rec)); }
+  $("#custSave").disabled=false;
+  if(error){ m.className="msg err"; m.textContent = /duplicate|unique/i.test(error.message)?"Esiste già un cliente con questo telefono.":error.message; return; }
+  $("#custModal").classList.add("hide"); toast(id?"Cliente aggiornato":"Cliente aggiunto"); loadCustomers();
+});
+$("#custDelete").addEventListener("click", async ()=>{
+  const id=$("#custDelete").dataset.id; if(!id) return;
+  if(!confirm("Eliminare questo cliente dall'anagrafica?")) return;
+  const { error } = await sb.from("customers").delete().eq("id",id);
+  if(error){ toast("Errore, riprova"); return; }
+  $("#custModal").classList.add("hide"); toast("Cliente eliminato"); loadCustomers();
 });
 
 /* =====================================================================
