@@ -259,6 +259,7 @@ input,select{font-family:inherit}
   <nav class="tabs">
     <button class="tab on" data-tab="bookings" data-mod="prenotazioni">Prenotazioni<span id="bkBadge" class="tab-badge hide"></span></button>
     <button class="tab" data-tab="history" data-mod="storico">Storico</button>
+    <button class="tab" data-tab="vouchers" data-mod="voucher">Voucher</button>
     <button class="tab" data-tab="settings" data-mod="impostazioni">Impostazioni</button>
     <button class="tab hide" id="adminTabBtn" data-tab="admin">Admin</button>
   </nav>
@@ -297,6 +298,17 @@ input,select{font-family:inherit}
       <input id="histSearch" class="input" style="max-width:280px" placeholder="Cerca per nome o telefono…" />
     </div>
     <div id="historyList"><div class="loading">Carico…</div></div>
+  </main>
+
+  <!-- VOUCHER -->
+  <main id="tab-vouchers" class="wrap hide">
+    <div class="filters">
+      <button class="chip on" data-vf="tutti">Tutti</button>
+      <button class="chip" data-vf="valido">Validi</button>
+      <button class="chip" data-vf="usato">Usati</button>
+      <input id="vSearch" class="input" style="max-width:240px; margin-left:auto" placeholder="Cerca codice o nome…" />
+    </div>
+    <div id="vouchersList"><div class="loading">Carico…</div></div>
   </main>
 
   <!-- IMPOSTAZIONI -->
@@ -424,6 +436,7 @@ function fmtDay(iso){
   return s.charAt(0).toUpperCase()+s.slice(1);
 }
 function fmtDate(iso){ return new Date(iso+"T00:00:00").toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"numeric"}); }
+function euro(c){ return (c==null)?"":(c/100).toLocaleString("it-IT",{style:"currency",currency:"EUR",minimumFractionDigits:0}); }
 function waLink(phone){ return "https://wa.me/"+(phone||"").replace(/\D/g,""); }
 function logoUrl(path){ return path ? sb.storage.from("logos").getPublicUrl(path).data.publicUrl : null; }
 
@@ -585,9 +598,10 @@ function switchTab(name){
   if(SELECT_MODE) exitSelect();
   if(name==="bookings") clearNewBadge();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
-  ["bookings","history","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
+  ["bookings","history","vouchers","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
   if(name==="bookings") loadBookings();
   if(name==="history")  loadHistory();
+  if(name==="vouchers") loadVouchers();
   if(name==="settings") loadSettings();
   if(name==="admin")    loadAdmin();
 }
@@ -610,7 +624,7 @@ async function loadBookings(){
   SELECTED.clear();
   const list=$("#bookingsList"); list.innerHTML='<div class="loading">Carico…</div>';
   let q = sb.from("bookings")
-    .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,booking_types(label,key)")
+    .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,booking_types(label,key),services(name,duration_min,price_cents)")
     .order("booking_date",{ascending:true}).order("booking_time",{ascending:true,nullsFirst:true});
 
   if(ADMIN_CLIENT) q=q.eq("client_id", ADMIN_CLIENT.id);
@@ -636,6 +650,7 @@ async function loadBookings(){
 function bookingCard(b){
   const time = b.booking_time ? b.booking_time.slice(0,5) : '<span class="notime">Orario libero</span>';
   const type = b.booking_types ? b.booking_types.label : "";
+  const svc = b.services || null;   // presente per gli appuntamenti (saloni)
   const acts = [];
   if(b.status!=="confermata") acts.push(`<button class="act confirm" data-act="confermata" data-id="${b.id}">Conferma</button>`);
   if(b.status!=="annullata")  acts.push(`<button class="act cancel"  data-act="annullata"  data-id="${b.id}">Annulla</button>`);
@@ -657,8 +672,9 @@ function bookingCard(b){
       <span class="status ${b.status}">${STATUS_LABEL[b.status]}</span>
     </div>
     <div class="bk-meta">
-      <span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>
-      ${type?`<span>${esc(type)}</span>`:""}
+      ${ svc
+         ? `<span><b>${esc(svc.name)}</b>${svc.duration_min?` · ${svc.duration_min} min`:""}</span>`
+         : `<span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>${type?`<span>${esc(type)}</span>`:""}` }
       <a href="tel:${esc(b.customer_phone)}" style="color:inherit"><b>${esc(b.customer_phone)}</b></a>
       ${b.notes?`<span style="flex-basis:100%">✎ ${esc(b.notes)}</span>`:""}
     </div>
@@ -1397,6 +1413,64 @@ async function togglePush(){
   toast("Notifiche attivate"); renderPushState();
 }
 document.getElementById("pushBtn").addEventListener("click", togglePush);
+
+/* =====================================================================
+   VOUCHER (sezione titolare)
+   ===================================================================== */
+let VOUCHERS=[], VFILTER="tutti";
+async function loadVouchers(){
+  const list=$("#vouchersList"); list.innerHTML='<div class="loading">Carico…</div>';
+  const { data, error } = await sb.from("vouchers")
+    .select("id,code,service_name,amount_cents,from_name,to_name,message,buyer_email,status,created_at")
+    .order("created_at",{ascending:false});
+  if(error){ list.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
+  VOUCHERS=data||[]; renderVouchers();
+}
+function renderVouchers(){
+  const term=$("#vSearch").value.trim().toLowerCase();
+  let rows=VOUCHERS;
+  if(VFILTER!=="tutti") rows=rows.filter(v=>v.status===VFILTER);
+  if(term) rows=rows.filter(v=>(v.code||"").toLowerCase().includes(term)||(v.to_name||"").toLowerCase().includes(term)||(v.from_name||"").toLowerCase().includes(term));
+  const list=$("#vouchersList");
+  if(!rows.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>${VOUCHERS.length?"Nessun voucher con questi filtri.":"Ancora nessun voucher."}</div>`; return; }
+  list.innerHTML=rows.map(v=>`
+    <div class="bk">
+      <div class="bk-top">
+        <div>
+          <div class="bk-time" style="font-size:19px; letter-spacing:1px">${esc(v.code)}</div>
+          <div class="bk-name">${esc(v.service_name||"")}</div>
+        </div>
+        <span class="status ${v.status==='usato'?'annullata':'confermata'}">${v.status==='usato'?'Usato':'Valido'}</span>
+      </div>
+      <div class="bk-meta">
+        ${v.amount_cents!=null?`<span><b>${euro(v.amount_cents)}</b></span>`:""}
+        <span>Da <b>${esc(v.from_name||"")}</b> · per <b>${esc(v.to_name||"")}</b></span>
+        ${v.message?`<span style="flex-basis:100%">✎ ${esc(v.message)}</span>`:""}
+        <span style="flex-basis:100%; color:var(--muted)">${fmtDate(String(v.created_at).slice(0,10))}${v.buyer_email?` · ${esc(v.buyer_email)}`:""}</span>
+      </div>
+      <div class="actions">
+        ${v.status==='valido'
+          ? `<button class="act confirm" data-vuse="${v.id}">Segna come usato</button>`
+          : `<button class="act reopen" data-vrestore="${v.id}">Riporta a valido</button>`}
+      </div>
+    </div>`).join("");
+}
+document.querySelectorAll('#tab-vouchers .chip[data-vf]').forEach(c=>c.addEventListener("click",()=>{
+  document.querySelectorAll('#tab-vouchers .chip[data-vf]').forEach(x=>x.classList.remove("on"));
+  c.classList.add("on"); VFILTER=c.dataset.vf; renderVouchers();
+}));
+$("#vSearch").addEventListener("input", renderVouchers);
+$("#vouchersList").addEventListener("click", async e=>{
+  const use=e.target.closest("[data-vuse]");
+  const res=e.target.closest("[data-vrestore]");
+  if(!use && !res) return;
+  const id = use ? use.dataset.vuse : res.dataset.vrestore;
+  const patch = use ? { status:"usato", redeemed_at:new Date().toISOString() } : { status:"valido", redeemed_at:null };
+  (use||res).disabled=true;
+  const { error } = await sb.from("vouchers").update(patch).eq("id", id);
+  if(error){ toast("Errore, riprova"); (use||res).disabled=false; return; }
+  toast(use?"Voucher segnato come usato":"Voucher riportato a valido"); loadVouchers();
+});
 
 /* =====================================================================
    AVVIO
