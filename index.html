@@ -260,6 +260,8 @@ input,select{font-family:inherit}
     <button class="tab on" data-tab="bookings" data-mod="prenotazioni">Prenotazioni<span id="bkBadge" class="tab-badge hide"></span></button>
     <button class="tab" data-tab="history" data-mod="storico">Storico</button>
     <button class="tab" data-tab="customers" data-mod="clienti">Clienti</button>
+    <button class="tab" data-tab="services" data-mod="servizi">Servizi</button>
+    <button class="tab" data-tab="reports" data-mod="report">Report</button>
     <button class="tab" data-tab="vouchers" data-mod="voucher">Voucher</button>
     <button class="tab" data-tab="settings" data-mod="impostazioni">Impostazioni</button>
     <button class="tab hide" id="adminTabBtn" data-tab="admin">Admin</button>
@@ -309,6 +311,26 @@ input,select{font-family:inherit}
     </div>
     <div id="custCount" style="font-size:13px; color:var(--muted); margin-bottom:10px"></div>
     <div id="customersList"><div class="loading">Carico…</div></div>
+  </main>
+
+  <!-- SERVIZI -->
+  <main id="tab-services" class="wrap hide">
+    <div class="filters">
+      <input id="svcSearch" class="input" style="max-width:280px" placeholder="Cerca servizio…" />
+      <button class="chip" id="addSvcBtn" style="background:var(--ink);color:#fff;border-color:var(--ink); margin-left:auto">+ Aggiungi servizio</button>
+    </div>
+    <div id="servicesList"><div class="loading">Carico…</div></div>
+  </main>
+
+  <!-- REPORT -->
+  <main id="tab-reports" class="wrap hide">
+    <div class="filters">
+      <button class="chip on" data-rp="week">Settimana</button>
+      <button class="chip" data-rp="month">Mese</button>
+      <button class="chip" data-rp="year">Anno</button>
+      <button class="chip" data-rp="all">Tutto</button>
+    </div>
+    <div id="reportBox"><div class="loading">Carico…</div></div>
   </main>
 
   <!-- VOUCHER -->
@@ -374,6 +396,30 @@ input,select{font-family:inherit}
 </div>
 
 <div id="toast" class="toast"></div>
+
+<!-- MODALE: servizio -->
+<div id="svcModal" class="modal-back hide">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="svcModalTitle">Servizio</h3>
+      <button class="modal-x" id="svcClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="svcMsg" class="msg"></div>
+      <div class="mfield"><label>Nome servizio</label><input id="sName" class="input" placeholder="Es. Taglio uomo" /></div>
+      <div class="mrow">
+        <div class="mfield"><label>Prezzo (€)</label><input id="sPrice" type="number" min="0" step="0.5" class="input" placeholder="25" /></div>
+        <div class="mfield"><label>Durata (min)</label><input id="sDur" type="number" min="5" step="5" class="input" placeholder="30" /></div>
+      </div>
+      <div class="mfield"><label>Pausa dopo (min)</label><input id="sBuf" type="number" min="0" step="5" class="input" value="0" /></div>
+      <label class="consent" style="margin:4px 0 8px"><input type="checkbox" id="sActive" checked /> <span>Attivo (prenotabile)</span></label>
+      <div style="display:flex; gap:10px; margin-top:8px">
+        <button class="btn" id="svcSave" style="flex:1">Salva</button>
+        <button class="chip" id="svcDelete" style="border-color:var(--stop-line); color:var(--stop); display:none">Elimina</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- MODALE: cliente (aggiungi/modifica) -->
 <div id="custModal" class="modal-back hide">
@@ -581,7 +627,7 @@ async function boot(){
 
   renderClientTag();
   if(ME.role==="super_admin"){
-    document.querySelectorAll('.tab[data-tab="bookings"], .tab[data-tab="history"], .tab[data-tab="customers"], .tab[data-tab="vouchers"], .tab[data-tab="settings"]').forEach(t=>t.classList.add("hide"));
+    document.querySelectorAll('.tab[data-tab="bookings"], .tab[data-tab="history"], .tab[data-tab="customers"], .tab[data-tab="services"], .tab[data-tab="reports"], .tab[data-tab="vouchers"], .tab[data-tab="settings"]').forEach(t=>t.classList.add("hide"));
     $("#adminTabBtn").classList.remove("hide");
     $("#loginView").classList.add("hide");
     $("#appView").classList.remove("hide");
@@ -592,7 +638,7 @@ async function boot(){
   // --- TITOLARE: tab dinamiche dai moduli attivi ---
   const { data:mods } = await sb.from("client_modules").select("module_key,enabled").eq("client_id",CLIENT.id);
   let enabled = (mods||[]).filter(m=>m.enabled).map(m=>m.module_key);
-  if(!enabled.length) enabled = ["prenotazioni","storico","clienti","impostazioni"];   // default sensato
+  if(!enabled.length) enabled = ["prenotazioni","storico","clienti","report","impostazioni"];   // default sensato
   let firstTab = null;
   document.querySelectorAll('.tab[data-mod]').forEach(t=>{
     const on = enabled.includes(t.dataset.mod);
@@ -634,10 +680,12 @@ function switchTab(name){
   if(SELECT_MODE) exitSelect();
   if(name==="bookings") clearNewBadge();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
-  ["bookings","history","customers","vouchers","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
+  ["bookings","history","customers","services","reports","vouchers","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
   if(name==="bookings") loadBookings();
   if(name==="history")  loadHistory();
   if(name==="customers") loadCustomers();
+  if(name==="services") loadServices();
+  if(name==="reports")  loadReports();
   if(name==="vouchers") loadVouchers();
   if(name==="settings") loadSettings();
   if(name==="admin")    loadAdmin();
@@ -1177,7 +1225,7 @@ function openNewClient(){
 
         <h3 style="font-size:14px; margin:18px 0 8px">Moduli attivi</h3>
         <div style="display:flex; gap:6px; flex-wrap:wrap" id="ncMods">
-          ${[["prenotazioni","Prenotazioni",true],["storico","Storico",true],["clienti","Clienti",true],["impostazioni","Impostazioni",true],["voucher","Voucher",false]]
+          ${[["prenotazioni","Prenotazioni",true],["storico","Storico",true],["clienti","Clienti",true],["servizi","Servizi",false],["report","Report",true],["impostazioni","Impostazioni",true],["voucher","Voucher",false]]
             .map(m=>`<button type="button" class="chip ${m[2]?"on ":""}nc-mod" data-mod="${m[0]}">${m[1]}</button>`).join("")}
         </div>
 
@@ -1613,6 +1661,148 @@ $("#custDelete").addEventListener("click", async ()=>{
   if(error){ toast("Errore, riprova"); return; }
   $("#custModal").classList.add("hide"); toast("Cliente eliminato"); loadCustomers();
 });
+
+/* =====================================================================
+   SERVIZI (editor prezzi/durate)
+   ===================================================================== */
+let SERVICES_ROWS=[];
+function svcScopeId(){ return ADMIN_CLIENT ? ADMIN_CLIENT.id : (CLIENT ? CLIENT.id : null); }
+async function loadServices(){
+  const list=$("#servicesList"); list.innerHTML='<div class="loading">Carico…</div>';
+  let q=sb.from("services").select("id,key,name,price_cents,duration_min,buffer_min,active,sort_order").order("sort_order").order("name");
+  if(ADMIN_CLIENT) q=q.eq("client_id",ADMIN_CLIENT.id);
+  const { data, error } = await q;
+  if(error){ list.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
+  SERVICES_ROWS=data||[]; renderServices();
+}
+function renderServices(){
+  const term=$("#svcSearch").value.trim().toLowerCase();
+  let rows=SERVICES_ROWS;
+  if(term) rows=rows.filter(s=>(s.name||"").toLowerCase().includes(term));
+  const list=$("#servicesList");
+  if(!rows.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>${SERVICES_ROWS.length?"Nessun risultato.":"Ancora nessun servizio. Aggiungine uno."}</div>`; return; }
+  list.innerHTML=rows.map(s=>`
+    <div class="hist" data-svc="${s.id}" style="cursor:pointer">
+      <div class="who">
+        <b>${esc(s.name)}</b>
+        <div>${s.duration_min?`${s.duration_min} min`:""}${s.buffer_min?` +${s.buffer_min} pausa`:""}${!s.active?" · non attivo":""}</div>
+      </div>
+      <div class="visits"><div class="n" style="color:var(--ink)">${s.price_cents!=null?euro(s.price_cents):"—"}</div><div class="l">prezzo</div></div>
+    </div>`).join("");
+}
+$("#svcSearch").addEventListener("input", renderServices);
+$("#servicesList").addEventListener("click", e=>{ const r=e.target.closest("[data-svc]"); if(r) openService(SERVICES_ROWS.find(s=>s.id===r.dataset.svc)); });
+$("#addSvcBtn").addEventListener("click", ()=>openService(null));
+
+function slugifyKey(s){ return (s||"").toString().trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,""); }
+function openService(s){
+  $("#svcMsg").className="msg";
+  $("#svcModalTitle").textContent = s ? "Modifica servizio" : "Nuovo servizio";
+  $("#sName").value = s?.name || "";
+  $("#sPrice").value = (s && s.price_cents!=null) ? (s.price_cents/100) : "";
+  $("#sDur").value = s?.duration_min || 30;
+  $("#sBuf").value = s?.buffer_min || 0;
+  $("#sActive").checked = s ? !!s.active : true;
+  $("#svcSave").dataset.id = s?.id || "";
+  $("#svcSave").dataset.key = s?.key || "";
+  $("#svcDelete").style.display = s ? "inline-block" : "none";
+  $("#svcDelete").dataset.id = s?.id || "";
+  $("#svcModal").classList.remove("hide");
+}
+$("#svcClose").addEventListener("click", ()=>$("#svcModal").classList.add("hide"));
+$("#svcModal").addEventListener("click", e=>{ if(e.target.id==="svcModal") $("#svcModal").classList.add("hide"); });
+$("#svcSave").addEventListener("click", async ()=>{
+  const m=$("#svcMsg"); m.className="msg";
+  const name=$("#sName").value.trim();
+  if(!name){ m.className="msg err"; m.textContent="Inserisci il nome del servizio."; return; }
+  const price = $("#sPrice").value===""?null:Math.round(parseFloat($("#sPrice").value)*100);
+  const rec={ name, price_cents: (price!=null && !isNaN(price))?price:null,
+              duration_min: parseInt($("#sDur").value,10)||30, buffer_min: parseInt($("#sBuf").value,10)||0,
+              active: $("#sActive").checked };
+  const id=$("#svcSave").dataset.id;
+  $("#svcSave").disabled=true;
+  let error;
+  if(id){ ({error}=await sb.from("services").update(rec).eq("id",id)); }
+  else {
+    rec.client_id = svcScopeId();
+    rec.key = slugifyKey(name)+"-"+Math.random().toString(36).slice(2,6);
+    rec.sort_order = SERVICES_ROWS.length+1;
+    ({error}=await sb.from("services").insert(rec));
+  }
+  $("#svcSave").disabled=false;
+  if(error){ m.className="msg err"; m.textContent=error.message; return; }
+  $("#svcModal").classList.add("hide"); toast(id?"Servizio aggiornato":"Servizio aggiunto"); loadServices();
+});
+$("#svcDelete").addEventListener("click", async ()=>{
+  const id=$("#svcDelete").dataset.id; if(!id) return;
+  if(!confirm("Eliminare questo servizio? Le prenotazioni passate restano, ma non sarà più prenotabile.")) return;
+  // soft: disattivo invece di cancellare (mantiene i report storici)
+  const { error } = await sb.from("services").update({active:false}).eq("id",id);
+  if(error){ toast("Errore, riprova"); return; }
+  $("#svcModal").classList.add("hide"); toast("Servizio disattivato"); loadServices();
+});
+
+/* =====================================================================
+   REPORT (incassi dove c'è prezzo, volumi sempre) — solo confermate
+   ===================================================================== */
+let RPERIOD="week";
+function periodStart(p){
+  const d=new Date(); d.setHours(0,0,0,0);
+  if(p==="week"){ const g=(d.getDay()+6)%7; d.setDate(d.getDate()-g); }
+  else if(p==="month"){ d.setDate(1); }
+  else if(p==="year"){ d.setMonth(0,1); }
+  else return null;
+  return ymdLocal(d);
+}
+function ymdLocal(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+document.querySelectorAll('#tab-reports .chip[data-rp]').forEach(c=>c.addEventListener("click",()=>{
+  document.querySelectorAll('#tab-reports .chip[data-rp]').forEach(x=>x.classList.remove("on"));
+  c.classList.add("on"); RPERIOD=c.dataset.rp; loadReports();
+}));
+async function loadReports(){
+  const box=$("#reportBox"); box.innerHTML='<div class="loading">Carico…</div>';
+  let q=sb.from("bookings")
+    .select("booking_date,party_size,amount_cents,paid,status,services(name,price_cents)")
+    .eq("status","confermata");
+  if(ADMIN_CLIENT) q=q.eq("client_id",ADMIN_CLIENT.id);
+  const from=periodStart(RPERIOD);
+  if(from) q=q.gte("booking_date",from);
+  const { data, error } = await q.limit(10000);
+  if(error){ box.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
+  const rows=data||[];
+
+  let incasso=0, conPrezzo=0, coperti=0;
+  const perServ={};
+  rows.forEach(b=>{
+    coperti += b.party_size||0;
+    let val=null;
+    if(b.paid && b.amount_cents!=null) val=b.amount_cents;
+    else if(b.services && b.services.price_cents!=null) val=b.services.price_cents;
+    if(val!=null){ incasso+=val; conPrezzo++;
+      const k=b.services?b.services.name:"Altro"; perServ[k]=(perServ[k]||0)+val;
+    }
+  });
+  const nomePeriodo={week:"questa settimana",month:"questo mese",year:"quest'anno",all:"da sempre"}[RPERIOD];
+
+  const serviziOrdinati=Object.entries(perServ).sort((a,b)=>b[1]-a[1]);
+  box.innerHTML=`
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px">
+      <div class="card" style="margin:0"><p style="margin:0 0 4px">Prenotazioni confermate</p><div style="font-size:26px; font-weight:800">${rows.length}</div><div style="color:var(--muted); font-size:12px">${nomePeriodo}</div></div>
+      <div class="card" style="margin:0"><p style="margin:0 0 4px">Coperti / persone</p><div style="font-size:26px; font-weight:800">${coperti}</div><div style="color:var(--muted); font-size:12px">${nomePeriodo}</div></div>
+    </div>
+    ${conPrezzo>0 ? `
+      <div class="card" style="text-align:center; margin-bottom:14px">
+        <p style="margin:0 0 4px">Incasso stimato</p>
+        <div style="font-size:34px; font-weight:800; color:var(--ok)">${euro(incasso)}</div>
+        <div style="color:var(--muted); font-size:12px">su ${conPrezzo} prenotazioni con prezzo · ${nomePeriodo}</div>
+      </div>
+      <div class="card">
+        <h3 style="margin:0 0 10px">Per servizio</h3>
+        ${serviziOrdinati.map(([n,v])=>`<div style="display:flex; justify-content:space-between; padding:7px 0; border-top:1px solid var(--line-soft)"><span>${esc(n)}</span><b>${euro(v)}</b></div>`).join("")}
+      </div>`
+    : `<div class="empty">Nessun servizio con prezzo in questo periodo. Per le attività a posti (ristoranti) il report mostra solo i volumi qui sopra.</div>`}
+  `;
+}
 
 /* =====================================================================
    AVVIO
