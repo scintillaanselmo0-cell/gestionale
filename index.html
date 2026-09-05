@@ -581,7 +581,7 @@ async function boot(){
 
   renderClientTag();
   if(ME.role==="super_admin"){
-    document.querySelectorAll('.tab[data-tab="bookings"], .tab[data-tab="history"], .tab[data-tab="settings"]').forEach(t=>t.classList.add("hide"));
+    document.querySelectorAll('.tab[data-tab="bookings"], .tab[data-tab="history"], .tab[data-tab="customers"], .tab[data-tab="vouchers"], .tab[data-tab="settings"]').forEach(t=>t.classList.add("hide"));
     $("#adminTabBtn").classList.remove("hide");
     $("#loginView").classList.add("hide");
     $("#appView").classList.remove("hide");
@@ -1018,6 +1018,7 @@ async function loadAdmin(){
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end">
         <button class="toggle ${c.status}" data-id="${c.id}" data-status="${c.status}">${c.status==="attivo"?"Attivo":"Sospeso"}</button>
         <button class="chip" data-cat="${c.id}" data-name="${esc(c.name)}">Categorie</button>
+        <button class="chip" data-viewcust="${c.id}" data-name="${esc(c.name)}">Vedi clienti</button>
         <button class="chip" data-view="${c.id}" data-name="${esc(c.name)}">Vedi prenotazioni →</button>
       </div>
     </div>`;
@@ -1026,6 +1027,8 @@ async function loadAdmin(){
 $("#adminList").addEventListener("click", async e=>{
   const view=e.target.closest("[data-view]");
   if(view){ openClientBookings(view.dataset.view, view.dataset.name); return; }
+  const vcust=e.target.closest("[data-viewcust]");
+  if(vcust){ openClientCustomers(vcust.dataset.viewcust, vcust.dataset.name); return; }
   const cat=e.target.closest("[data-cat]");
   if(cat){ openAssignCats(cat.dataset.cat, cat.dataset.name); return; }
   const btn=e.target.closest(".toggle"); if(!btn) return;
@@ -1287,6 +1290,28 @@ function closeClientBookings(){
   loadAdmin();
 }
 
+// Super admin: anagrafica clienti di un singolo cliente (isolata)
+function openClientCustomers(id, name){
+  ADMIN_CLIENT = { id, name };
+  const wrap=$("#tab-customers");
+  let hdr=$("#adminCustHeader");
+  if(!hdr){ hdr=document.createElement("div"); hdr.id="adminCustHeader"; wrap.insertBefore(hdr, wrap.firstChild); }
+  hdr.innerHTML=`<button class="chip" id="adminCustBack" style="margin-bottom:12px">← Torna ai clienti</button>
+                 <h3 style="margin:0 0 14px; font-size:16px">Clienti di ${esc(name)}</h3>`;
+  $("#adminCustBack").addEventListener("click", closeClientCustomers);
+  $("#custSearch").value="";
+  $("#tab-admin").classList.add("hide");
+  $("#tab-customers").classList.remove("hide");
+  loadCustomers();
+}
+function closeClientCustomers(){
+  ADMIN_CLIENT = null;
+  const hdr=$("#adminCustHeader"); if(hdr) hdr.remove();
+  $("#tab-customers").classList.add("hide");
+  $("#tab-admin").classList.remove("hide");
+  loadAdmin();
+}
+
 /* =====================================================================
    AUDIO (beep senza file esterni) + REALTIME (notifica dal vivo)
    ===================================================================== */
@@ -1515,9 +1540,11 @@ $("#vouchersList").addEventListener("click", async e=>{
 let CUSTOMERS=[];
 async function loadCustomers(){
   const list=$("#customersList"); list.innerHTML='<div class="loading">Carico…</div>';
-  const { data, error } = await sb.from("customers")
+  let q = sb.from("customers")
     .select("id,name,phone,email,city,notes")
     .order("name",{ascending:true, nullsFirst:false}).limit(5000);
+  if(ADMIN_CLIENT) q = q.eq("client_id", ADMIN_CLIENT.id);
+  const { data, error } = await q;
   if(error){ list.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
   CUSTOMERS=data||[]; renderCustomers();
 }
@@ -1574,7 +1601,7 @@ $("#custSave").addEventListener("click", async ()=>{
   $("#custSave").disabled=true;
   let error;
   if(id){ ({error}=await sb.from("customers").update(rec).eq("id",id)); }
-  else  { rec.client_id=CLIENT.id; ({error}=await sb.from("customers").insert(rec)); }
+  else  { rec.client_id = ADMIN_CLIENT ? ADMIN_CLIENT.id : CLIENT.id; ({error}=await sb.from("customers").insert(rec)); }
   $("#custSave").disabled=false;
   if(error){ m.className="msg err"; m.textContent = /duplicate|unique/i.test(error.message)?"Esiste già un cliente con questo telefono.":error.message; return; }
   $("#custModal").classList.add("hide"); toast(id?"Cliente aggiornato":"Cliente aggiunto"); loadCustomers();
