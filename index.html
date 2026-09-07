@@ -217,6 +217,11 @@ input,select{font-family:inherit}
 .mfield{margin-bottom:12px}
 .mfield label{display:block; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px}
 .mrow{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.suggest{position:absolute; left:0; right:0; top:100%; z-index:5; background:var(--card); border:1px solid var(--line); border-radius:10px; margin-top:4px; max-height:240px; overflow:auto; box-shadow:var(--sh)}
+.suggest .s-item{padding:10px 12px; cursor:pointer; font-size:14px; border-bottom:1px solid var(--line-soft)}
+.suggest .s-item:last-child{border-bottom:0}
+.suggest .s-item:hover{background:var(--paper)}
+.suggest .s-item .s-sub{color:var(--muted); font-size:12px}
 /* coda invio conferme WhatsApp */
 .waq-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--line-soft)}
 .waq-row .who b{font-weight:700; font-size:15px}
@@ -467,10 +472,13 @@ input,select{font-family:inherit}
       <div id="addMsg" class="msg"></div>
       <div class="mfield" id="mTypeField"><label>Tipo</label><select id="mType" class="input"></select></div>
       <div id="mSvcBlock" class="hide">
-        <div class="mrow">
-          <div class="mfield"><label>Sezione</label><select id="mSection" class="input"></select></div>
-          <div class="mfield"><label>Servizio</label><select id="mService" class="input"></select></div>
+        <div class="mfield" style="position:relative">
+          <label>Servizio</label>
+          <input id="mSvcInput" class="input" placeholder="Scrivi il servizio (es. Piega)" autocomplete="off" />
+          <input type="hidden" id="mServiceKey" />
+          <div id="mSvcSuggest" class="suggest hide"></div>
         </div>
+        <div class="mfield"><label>Sezione</label><input id="mSectionShow" class="input" readonly placeholder="—" style="background:var(--paper)" /></div>
       </div>
       <div class="mrow">
         <div class="mfield"><label>Data</label><input id="mDate" type="date" class="input" /></div>
@@ -486,8 +494,11 @@ input,select{font-family:inherit}
           </select>
         </div>
       </div>
-      <div class="mfield"><label>Nome</label><input id="mName" class="input" placeholder="Mario Rossi" /></div>
-      <div class="mfield"><label>Telefono</label><input id="mPhone" type="tel" class="input" placeholder="350 142 7341" /></div>
+      <div class="mfield" style="position:relative"><label>Nome</label>
+        <input id="mName" class="input" placeholder="Mario Rossi" autocomplete="off" />
+        <div id="mNameSuggest" class="suggest hide"></div>
+      </div>
+      <div class="mfield"><label>Telefono <span style="color:var(--muted);font-weight:400">(facoltativo)</span></label><input id="mPhone" type="tel" class="input" placeholder="350 142 7341" /></div>
       <div class="mfield"><label>Note <span style="color:var(--muted);font-weight:400">(facoltative)</span></label><input id="mNotes" class="input" /></div>
       <button class="btn" id="addSave" style="margin-top:6px">Salva prenotazione</button>
     </div>
@@ -1442,32 +1453,73 @@ async function openAddModal(){
   $("#mType").innerHTML = BTYPES.map(t=>`<option value="${esc(t.key)}">${esc(t.label)}</option>`).join("");
   $("#mDate").value = isoToday(0);
   $("#mTime").value = "";
-  $("#mParty").value = 2;
+  $("#mParty").value = 1;
   $("#mStatus").value = "confermata";
   $("#mName").value = ""; $("#mPhone").value = ""; $("#mNotes").value = "";
+  $("#mSvcInput").value = ""; $("#mServiceKey").value = ""; $("#mSectionShow").value = "";
+  $("#mSvcSuggest").classList.add("hide"); $("#mNameSuggest").classList.add("hide");
   $("#addMsg").className = "msg";
 
-  // carica i servizi del cliente: se ce ne sono -> modalità "servizio a cascata"
   const { data: svcs } = await sb.from("services")
     .select("key,name,price_cents,category").eq("client_id", CLIENT.id).eq("active", true).order("sort_order").order("name");
   ADD_SERVICES = svcs || [];
   const hasServices = ADD_SERVICES.length > 0;
   $("#mSvcBlock").classList.toggle("hide", !hasServices);
   $("#mTypeField").classList.toggle("hide", hasServices);   // col servizio il "Tipo" non serve
-
-  if(hasServices){
-    const cats=[...new Set(ADD_SERVICES.map(s=>s.category||"Servizi"))];
-    $("#mSection").innerHTML = cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
-    fillAddServices();
-  }
   $("#addModal").classList.remove("hide");
 }
-function fillAddServices(){
-  const sec=$("#mSection").value;
-  const rows=ADD_SERVICES.filter(s=>(s.category||"Servizi")===sec);
-  $("#mService").innerHTML = rows.map(s=>`<option value="${esc(s.key)}">${esc(s.name)}${s.price_cents!=null?" — "+euro(s.price_cents):""}</option>`).join("");
-}
-document.getElementById("mSection")?.addEventListener("change", fillAddServices);
+function shortSvcName(n){ const p=String(n||"").split("·"); return (p.length>1?p.slice(1).join("·"):p[0]).trim(); }
+
+// --- ricerca servizio (suggerimenti) -> sezione automatica ---
+$("#mSvcInput")?.addEventListener("input", ()=>{
+  const term=$("#mSvcInput").value.trim().toLowerCase();
+  $("#mServiceKey").value=""; $("#mSectionShow").value="";
+  const box=$("#mSvcSuggest");
+  if(!term){ box.classList.add("hide"); return; }
+  const rows=ADD_SERVICES.filter(s=>{
+    const sn=shortSvcName(s.name).toLowerCase();
+    return sn.startsWith(term) || (s.name||"").toLowerCase().includes(term);
+  }).slice(0,10);
+  if(!rows.length){ box.innerHTML=`<div class="s-item" style="color:var(--muted)">Nessun servizio</div>`; box.classList.remove("hide"); return; }
+  box.innerHTML=rows.map(s=>`<div class="s-item" data-key="${esc(s.key)}" data-name="${esc(shortSvcName(s.name))}" data-cat="${esc(s.category||"")}">
+      ${esc(shortSvcName(s.name))} <span class="s-sub">· ${esc(s.category||"")}${s.price_cents!=null?" · "+euro(s.price_cents):""}</span></div>`).join("");
+  box.classList.remove("hide");
+});
+$("#mSvcSuggest")?.addEventListener("click", e=>{
+  const it=e.target.closest(".s-item[data-key]"); if(!it) return;
+  $("#mSvcInput").value=it.dataset.name;
+  $("#mServiceKey").value=it.dataset.key;
+  $("#mSectionShow").value=it.dataset.cat;
+  $("#mSvcSuggest").classList.add("hide");
+});
+
+// --- ricerca nome cliente (suggerimenti) -> telefono automatico ---
+let nameSuggestT=null;
+$("#mName")?.addEventListener("input", ()=>{
+  const term=$("#mName").value.trim();
+  const box=$("#mNameSuggest");
+  clearTimeout(nameSuggestT);
+  if(term.length<2){ box.classList.add("hide"); return; }
+  nameSuggestT=setTimeout(async()=>{
+    const { data } = await sb.from("customers").select("name,phone").ilike("name", term+"%").order("name").limit(8);
+    const rows=data||[];
+    if(!rows.length){ box.classList.add("hide"); return; }
+    box.innerHTML=rows.map(c=>`<div class="s-item" data-name="${esc(c.name||"")}" data-phone="${esc(c.phone||"")}">
+        ${esc(c.name||"—")} ${c.phone?`<span class="s-sub">· ${esc(c.phone)}</span>`:""}</div>`).join("");
+    box.classList.remove("hide");
+  }, 200);
+});
+$("#mNameSuggest")?.addEventListener("click", e=>{
+  const it=e.target.closest(".s-item[data-name]"); if(!it) return;
+  $("#mName").value=it.dataset.name;
+  if(it.dataset.phone) $("#mPhone").value=it.dataset.phone;
+  $("#mNameSuggest").classList.add("hide");
+});
+// chiudi i suggerimenti cliccando fuori
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#mSvcInput,#mSvcSuggest")) $("#mSvcSuggest")?.classList.add("hide");
+  if(!e.target.closest("#mName,#mNameSuggest")) $("#mNameSuggest")?.classList.add("hide");
+});
 
 async function saveManualBooking(){
   const m=$("#addMsg"); m.className="msg";
@@ -1475,22 +1527,21 @@ async function saveManualBooking(){
   const date=$("#mDate").value, time=$("#mTime").value;
   const name=$("#mName").value.trim(), phone=$("#mPhone").value.trim();
   const party=parseInt($("#mParty").value,10)||1, status=$("#mStatus").value, notes=$("#mNotes").value.trim();
-  // tipo: col servizio usiamo il tipo "appuntamento" (o il primo disponibile); altrimenti il tipo scelto
   let type = $("#mType").value;
   let service_key = null;
   if(useSvc){
-    service_key = $("#mService").value;
-    if(!service_key){ m.className="msg err"; m.textContent="Scegli il servizio."; return; }
+    service_key = $("#mServiceKey").value;
+    if(!service_key){ m.className="msg err"; m.textContent="Scegli un servizio dall'elenco."; return; }
     const appt = BTYPES.find(t=>t.key==="appuntamento") || BTYPES[0];
     type = appt ? appt.key : type;
   }
   if(!type){ m.className="msg err"; m.textContent="Configurazione tipi mancante."; return; }
   if(!date){ m.className="msg err"; m.textContent="Inserisci la data."; return; }
   if(!name){ m.className="msg err"; m.textContent="Inserisci il nome."; return; }
-  if(!phone){ m.className="msg err"; m.textContent="Inserisci il telefono."; return; }
+  // telefono FACOLTATIVO nell'inserimento manuale
   $("#addSave").disabled=true; $("#addSave").textContent="Salvo…";
   const { data, error } = await sb.rpc("create_manual_booking",{
-    p_type_key:type, p_name:name, p_phone:phone, p_date:date,
+    p_type_key:type, p_name:name, p_phone: phone||null, p_date:date,
     p_time: time||null, p_party:party, p_status:status, p_notes: notes||null,
     p_service_key: service_key
   });
@@ -1837,8 +1888,8 @@ async function loadReports(){
   rows.forEach(b=>{
     coperti += b.party_size||0;
     let val=null;
-    if(b.paid && b.amount_cents!=null) val=b.amount_cents;
-    else if(b.services && b.services.price_cents!=null) val=b.services.price_cents;
+    if(b.paid && b.amount_cents!=null) val=b.amount_cents;                                   // pagato online: già totale
+    else if(b.services && b.services.price_cents!=null) val=b.services.price_cents*(b.party_size||1);  // a prezzo: × persone
     if(val!=null){ incasso+=val; conPrezzo++;
       const k=b.services?b.services.name:"Altro"; perServ[k]=(perServ[k]||0)+val;
     }
