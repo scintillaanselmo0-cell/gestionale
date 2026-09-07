@@ -465,7 +465,13 @@ input,select{font-family:inherit}
     </div>
     <div class="modal-body">
       <div id="addMsg" class="msg"></div>
-      <div class="mfield"><label>Tipo</label><select id="mType" class="input"></select></div>
+      <div class="mfield" id="mTypeField"><label>Tipo</label><select id="mType" class="input"></select></div>
+      <div id="mSvcBlock" class="hide">
+        <div class="mrow">
+          <div class="mfield"><label>Sezione</label><select id="mSection" class="input"></select></div>
+          <div class="mfield"><label>Servizio</label><select id="mService" class="input"></select></div>
+        </div>
+      </div>
       <div class="mrow">
         <div class="mfield"><label>Data</label><input id="mDate" type="date" class="input" /></div>
         <div class="mfield"><label>Orario</label><input id="mTime" type="time" class="input" /></div>
@@ -1431,7 +1437,8 @@ $("#addClose").addEventListener("click", ()=>$("#addModal").classList.add("hide"
 $("#addModal").addEventListener("click", e=>{ if(e.target.id==="addModal") $("#addModal").classList.add("hide"); });
 $("#addSave").addEventListener("click", saveManualBooking);
 
-function openAddModal(){
+let ADD_SERVICES=[];   // servizi del cliente per l'aggiunta manuale
+async function openAddModal(){
   $("#mType").innerHTML = BTYPES.map(t=>`<option value="${esc(t.key)}">${esc(t.label)}</option>`).join("");
   $("#mDate").value = isoToday(0);
   $("#mTime").value = "";
@@ -1439,21 +1446,53 @@ function openAddModal(){
   $("#mStatus").value = "confermata";
   $("#mName").value = ""; $("#mPhone").value = ""; $("#mNotes").value = "";
   $("#addMsg").className = "msg";
+
+  // carica i servizi del cliente: se ce ne sono -> modalità "servizio a cascata"
+  const { data: svcs } = await sb.from("services")
+    .select("key,name,price_cents,category").eq("client_id", CLIENT.id).eq("active", true).order("sort_order").order("name");
+  ADD_SERVICES = svcs || [];
+  const hasServices = ADD_SERVICES.length > 0;
+  $("#mSvcBlock").classList.toggle("hide", !hasServices);
+  $("#mTypeField").classList.toggle("hide", hasServices);   // col servizio il "Tipo" non serve
+
+  if(hasServices){
+    const cats=[...new Set(ADD_SERVICES.map(s=>s.category||"Servizi"))];
+    $("#mSection").innerHTML = cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    fillAddServices();
+  }
   $("#addModal").classList.remove("hide");
 }
+function fillAddServices(){
+  const sec=$("#mSection").value;
+  const rows=ADD_SERVICES.filter(s=>(s.category||"Servizi")===sec);
+  $("#mService").innerHTML = rows.map(s=>`<option value="${esc(s.key)}">${esc(s.name)}${s.price_cents!=null?" — "+euro(s.price_cents):""}</option>`).join("");
+}
+document.getElementById("mSection")?.addEventListener("change", fillAddServices);
+
 async function saveManualBooking(){
   const m=$("#addMsg"); m.className="msg";
-  const type=$("#mType").value, date=$("#mDate").value, time=$("#mTime").value;
+  const useSvc = !$("#mSvcBlock").classList.contains("hide");
+  const date=$("#mDate").value, time=$("#mTime").value;
   const name=$("#mName").value.trim(), phone=$("#mPhone").value.trim();
   const party=parseInt($("#mParty").value,10)||1, status=$("#mStatus").value, notes=$("#mNotes").value.trim();
-  if(!type){ m.className="msg err"; m.textContent="Scegli il tipo."; return; }
+  // tipo: col servizio usiamo il tipo "appuntamento" (o il primo disponibile); altrimenti il tipo scelto
+  let type = $("#mType").value;
+  let service_key = null;
+  if(useSvc){
+    service_key = $("#mService").value;
+    if(!service_key){ m.className="msg err"; m.textContent="Scegli il servizio."; return; }
+    const appt = BTYPES.find(t=>t.key==="appuntamento") || BTYPES[0];
+    type = appt ? appt.key : type;
+  }
+  if(!type){ m.className="msg err"; m.textContent="Configurazione tipi mancante."; return; }
   if(!date){ m.className="msg err"; m.textContent="Inserisci la data."; return; }
   if(!name){ m.className="msg err"; m.textContent="Inserisci il nome."; return; }
   if(!phone){ m.className="msg err"; m.textContent="Inserisci il telefono."; return; }
   $("#addSave").disabled=true; $("#addSave").textContent="Salvo…";
   const { data, error } = await sb.rpc("create_manual_booking",{
     p_type_key:type, p_name:name, p_phone:phone, p_date:date,
-    p_time: time||null, p_party:party, p_status:status, p_notes: notes||null
+    p_time: time||null, p_party:party, p_status:status, p_notes: notes||null,
+    p_service_key: service_key
   });
   $("#addSave").disabled=false; $("#addSave").textContent="Salva prenotazione";
   if(error || !data || !data.ok){
