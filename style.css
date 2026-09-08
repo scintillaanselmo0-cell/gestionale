@@ -218,13 +218,14 @@ input,select{font-family:inherit}
 .ag-head{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px}
 .ag-hint{font-size:12px; color:var(--muted); margin:10px 2px 0}
 .ag-grid{position:relative}
+#tab-bookings:has(#agendaView:not(.hide)){ max-width:none; padding-left:6px; padding-right:6px }
 .ag-scroll{overflow:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--line); border-radius:12px; background:var(--card);
   height:calc(100vh - 220px); height:calc(100dvh - 220px); min-height:440px}
 .ag-inner{display:flex; width:100%}
 .ag-rail{position:relative; width:52px; flex:0 0 52px; border-right:1px solid var(--line); margin-top:34px}
 .ag-hour{position:absolute; left:0; right:5px; transform:translateY(-50%); font-size:11px; color:var(--muted); text-align:right}
 .ag-cols{display:flex; flex:1}
-.ag-col{flex:1 0 170px; border-right:1px solid var(--line-soft)}
+.ag-col{flex:1 1 130px; max-width:190px; border-right:1px solid var(--line-soft)}
 .ag-colhead{height:34px; display:flex; align-items:center; gap:7px; padding:0 10px; font-size:13px; font-weight:700; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--card); z-index:2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .ag-dot{width:9px; height:9px; border-radius:50%; background:var(--c,#3b7a57); flex:0 0 9px}
 .ag-colbody{position:relative}
