@@ -737,6 +737,12 @@ function openNewClient(){
           <div class="mfield"><label>Font</label><input id="ncFont" class="input" value="Poppins" /></div>
         </div>
 
+        <h3 style="font-size:14px; margin:18px 0 8px">Preset attivita</h3>
+        <select id="ncPreset" class="input">
+          <option value="parrucchiere">Parrucchiere / Salone - agenda + personale (consigliato)</option>
+          <option value="">Personalizzato / Ristorante</option>
+        </select>
+
         <h3 style="font-size:14px; margin:18px 0 8px">Tipi di prenotazione</h3>
         <div id="ncTypes">${btRowHtml()}</div>
         <button type="button" class="chip" id="ncAddType">+ Aggiungi tipo</button>
@@ -813,6 +819,16 @@ async function saveNewClient(back, close){
     };
     if(!isNaN(cap) && cap>0) rules.capacity=cap;
     booking_types.push({ key: slugify(label), label, rules });
+  }
+  // preset parrucchiere: agenda appuntamenti automatica per ogni nuovo salone
+  const ncPreset = back.querySelector("#ncPreset") ? back.querySelector("#ncPreset").value : "";
+  if(ncPreset==="parrucchiere"){
+    if(!booking_types.some(t=>t.key==="appuntamento")){
+      booking_types.unshift({ key:"appuntamento", label:"Appuntamento", rules:{
+        weekdays:[1,2,3,4,5,6], time_from:"09:30", time_to:"18:30",
+        slot_minutes:15, min_party:1, max_party:1, advance_days:45, lead_hours:1 } });
+    }
+    if(!modules.includes("servizi")) modules.push("servizi");
   }
   if(!booking_types.length) return fail("Aggiungi almeno un tipo di prenotazione con nome.");
 
@@ -1563,6 +1579,7 @@ function agBlockHtml(a,fromMin){
 }
 
 function agBindPointer(mount, fromMin){
+  let tap=null;   // possibile tocco su spazio vuoto
   mount.onpointerdown=(e)=>{
     const resize=e.target.closest(".ag-resize");
     const block=e.target.closest(".ag-block");
@@ -1578,12 +1595,10 @@ function agBindPointer(mount, fromMin){
       block.classList.add(resize?"resizing":"moving");
       return;
     }
-    // tocco su spazio vuoto -> nuovo appuntamento con orario precompilato
-    const rect=body.getBoundingClientRect();
-    const min=agSnap(fromMin + (e.clientY-rect.top)/AG_PXMIN);
-    openAddModal({ date:AG_DATE, time:agMinToTime(Math.max(fromMin,min)) });
+    tap={ x:e.clientX, y:e.clientY, t:Date.now(), body };   // memorizzo, NON apro
   };
   mount.onpointermove=(e)=>{
+    if(tap && (Math.abs(e.clientX-tap.x)>8 || Math.abs(e.clientY-tap.y)>8)) tap=null;  // e uno scroll
     if(!AG_DRAG) return;
     const dy=e.clientY-AG_DRAG.startY, dx=e.clientX-AG_DRAG.startX;
     if(Math.abs(dy)>4||Math.abs(dx)>4) AG_DRAG.moved=true;
@@ -1596,7 +1611,19 @@ function agBindPointer(mount, fromMin){
       if(tb && tb!==AG_DRAG.el.parentElement) tb.appendChild(AG_DRAG.el);
     }
   };
-  const finish=async()=>{
+  const finish=async(e)=>{
+    if(tap && !AG_DRAG){
+      const moved=Math.abs(e.clientX-tap.x)>8||Math.abs(e.clientY-tap.y)>8;
+      const quick=(Date.now()-tap.t)<600;
+      const body=tap.body, cy=e.clientY; tap=null;
+      if(!moved && quick){
+        const rect=body.getBoundingClientRect();
+        const min=agSnap(fromMin + (cy-rect.top)/AG_PXMIN);
+        openAddModal({ date:AG_DATE, time:agMinToTime(Math.max(fromMin,min)) });
+      }
+      return;
+    }
+    tap=null;
     if(!AG_DRAG) return;
     const D=AG_DRAG; AG_DRAG=null;
     D.el.classList.remove("moving","resizing");
@@ -1605,17 +1632,17 @@ function agBindPointer(mount, fromMin){
       const newDur=Math.max(AG_RULES.step, agSnap(parseFloat(D.el.style.height)/AG_PXMIN));
       await agUpdate(D.id,{ duration_min:newDur });
     } else {
-      const body=D.el.closest(".ag-colbody");
+      const bodyEl=D.el.closest(".ag-colbody");
       const newStart=agSnap(D.fromMin + (parseFloat(D.el.style.top)/AG_PXMIN));
-      const raw=body?body.dataset.staff:null;
+      const raw=bodyEl?bodyEl.dataset.staff:null;
       const patch={ booking_time:agMinToTime(Math.max(0,newStart)) };
-      patch.staff_id = (raw==="__none__"||raw==="__all__"||!raw) ? null : raw;
+      patch.staff_id=(raw==="__none__"||raw==="__all__"||!raw)?null:raw;
       await agUpdate(D.id, patch);
     }
     loadAgenda();
   };
   mount.onpointerup=finish;
-  mount.onpointercancel=()=>{ if(AG_DRAG){ AG_DRAG.el.classList.remove("moving","resizing"); AG_DRAG=null; loadAgenda(); } };
+  mount.onpointercancel=()=>{ tap=null; if(AG_DRAG){ AG_DRAG.el.classList.remove("moving","resizing"); AG_DRAG=null; loadAgenda(); } };
 }
 
 async function agUpdate(id, patch){
