@@ -199,7 +199,7 @@ function switchTab(name){
   if(name==="bookings") clearNewBadge();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
   ["bookings","history","customers","services","reports","vouchers","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
-  if(name==="bookings") loadBookings();
+  if(name==="bookings"){ loadBookings(); agApplyView(); }
   if(name==="history")  loadHistory();
   if(name==="customers") loadCustomers();
   if(name==="services") loadServices();
@@ -940,10 +940,10 @@ $("#addModal").addEventListener("click", e=>{ if(e.target.id==="addModal") $("#a
 $("#addSave").addEventListener("click", saveManualBooking);
 
 let ADD_SERVICES=[];   // servizi del cliente per l'aggiunta manuale
-async function openAddModal(){
+async function openAddModal(prefill){
   $("#mType").innerHTML = BTYPES.map(t=>`<option value="${esc(t.key)}">${esc(t.label)}</option>`).join("");
-  $("#mDate").value = isoToday(0);
-  $("#mTime").value = "";
+  $("#mDate").value = (prefill&&prefill.date) || isoToday(0);
+  $("#mTime").value = (prefill&&prefill.time) || "";
   $("#mParty").value = 1;
   $("#mStatus").value = "confermata";
   $("#mName").value = ""; $("#mPhone").value = ""; $("#mNotes").value = "";
@@ -1044,6 +1044,7 @@ async function saveManualBooking(){
   $("#addModal").classList.add("hide");
   toast("Prenotazione aggiunta");
   loadBookings();
+  if(typeof AG_VIEW!=="undefined" && AG_VIEW==="agenda") loadAgenda();
 }
 
 /* =====================================================================
@@ -1452,6 +1453,236 @@ async function loadReports(){
     : (agg.conPrezzo===0 ? `<div class="empty">Nessun servizio con prezzo in questo periodo. Per le attività a posti (ristoranti) il report mostra solo i volumi qui sopra.</div>` : "")}
   `;
 }
+
+/* =====================================================================
+   AGENDA — vista griglia con personale, drag & resize (additivo)
+   ===================================================================== */
+var AG_VIEW="list";
+var AG_DATE=isoToday(0);
+var AG_STAFF=[];
+var AG_APPTS=[];
+var AG_RULES={from:"09:30",to:"18:30",step:15};
+var AG_PXMIN=1.35;          // pixel per minuto
+var AG_DRAG=null;
+
+function agToMin(hhmm){ const p=String(hhmm||"0:0").split(":"); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0); }
+function agMinToTime(min){ min=Math.max(0,Math.round(min)); const h=Math.floor(min/60), m=min%60; return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0"); }
+function agSnap(min){ const s=AG_RULES.step||15; return Math.round(min/s)*s; }
+function agDur(b){ return b.duration_min || (b.services&&b.services.duration_min) || AG_RULES.step || 30; }
+function agShiftDay(iso,delta){ const d=new Date(iso+"T00:00:00"); d.setDate(d.getDate()+delta); return ymd(d); }
+
+// mostra lista o agenda dentro il tab Prenotazioni
+function agApplyView(){
+  const isAg = AG_VIEW==="agenda";
+  const hasAppt = (typeof BTYPES!=="undefined") && BTYPES.some(t=>t.key==="appuntamento");
+  const ab=$("#bkViewAgenda"); if(ab) ab.classList.toggle("hide", !hasAppt);
+  const tg=$("#bkViewList")?.parentElement; if(tg) tg.classList.toggle("hide", !hasAppt);   // niente toggle se non è un'agenda
+  const t=(sel,on)=>{ const el=$(sel); if(el) el.classList.toggle("hide",!on); };
+  t("#bkListTools", !isAg);
+  t("#bookingsList",!isAg);
+  t("#agendaView",   isAg);
+  const lb=$("#bkViewList"); if(lb) lb.classList.toggle("on",!isAg);
+  if(ab) ab.classList.toggle("on", isAg && hasAppt);
+  if(isAg){ const nb=$("#newBanner"); if(nb) nb.classList.add("hide"); const d=$("#agDate"); if(d) d.value=AG_DATE; loadAgenda(); }
+}
+
+$("#bkViewList")   && $("#bkViewList").addEventListener("click", ()=>{ AG_VIEW="list";   agApplyView(); loadBookings(); });
+$("#bkViewAgenda") && $("#bkViewAgenda").addEventListener("click", ()=>{ AG_VIEW="agenda"; agApplyView(); });
+$("#agPrev")  && $("#agPrev").addEventListener("click", ()=>{ AG_DATE=agShiftDay(AG_DATE,-1); $("#agDate").value=AG_DATE; loadAgenda(); });
+$("#agNext")  && $("#agNext").addEventListener("click", ()=>{ AG_DATE=agShiftDay(AG_DATE, 1); $("#agDate").value=AG_DATE; loadAgenda(); });
+$("#agToday") && $("#agToday").addEventListener("click", ()=>{ AG_DATE=isoToday(0); $("#agDate").value=AG_DATE; loadAgenda(); });
+$("#agDate")  && $("#agDate").addEventListener("change", e=>{ AG_DATE=e.target.value||isoToday(0); loadAgenda(); });
+$("#agAdd")   && $("#agAdd").addEventListener("click", ()=>openAddModal({date:AG_DATE}));
+$("#agStaffBtn") && $("#agStaffBtn").addEventListener("click", openStaffModal);
+
+async function loadAgenda(){
+  const mount=$("#agendaGrid"); if(!mount) return;
+  mount.innerHTML='<div class="loading">Carico…</div>';
+  const scope=svcScopeId(); if(!scope){ mount.innerHTML='<div class="empty">Nessuna attività selezionata.</div>'; return; }
+  const [{data:staff},{data:bt}]=await Promise.all([
+    sb.from("staff").select("id,name,color,sort_order").eq("client_id",scope).eq("active",true).order("sort_order").order("name"),
+    sb.from("booking_types").select("rules").eq("client_id",scope).eq("key","appuntamento").maybeSingle()
+  ]);
+  AG_STAFF=staff||[];
+  const r=(bt&&bt.rules)||{};
+  AG_RULES={ from:r.time_from||"09:30", to:r.time_to||"18:30", step:parseInt(r.slot_minutes,10)||15 };
+  const { data:appts, error } = await sb.from("bookings")
+    .select("id,customer_name,customer_phone,booking_time,status,notes,staff_id,duration_min,booking_types!inner(key),services(name,duration_min,category)")
+    .eq("client_id",scope).eq("booking_date",AG_DATE).eq("booking_types.key","appuntamento")
+    .in("status",["in_attesa","confermata"]).not("booking_time","is",null);
+  if(error){ mount.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
+  AG_APPTS=appts||[];
+  renderAgenda();
+}
+
+function renderAgenda(){
+  const mount=$("#agendaGrid");
+  let cols=AG_STAFF.map(s=>({id:s.id,name:s.name,color:s.color||"#3b7a57"}));
+  const unassigned=AG_APPTS.filter(a=>!a.staff_id);
+  if(!cols.length){ cols=[{id:"__all__",name:"Agenda",color:"#6b7370"}]; }
+  else if(unassigned.length){ cols.push({id:"__none__",name:"Non assegnati",color:"#9aa3a0"}); }
+
+  const fromMin=Math.floor(agToMin(AG_RULES.from)/60)*60;
+  let endMin=agToMin(AG_RULES.to);
+  AG_APPTS.forEach(a=>{ endMin=Math.max(endMin, agToMin(a.booking_time.slice(0,5))+agDur(a)); });
+  endMin=Math.ceil(endMin/60)*60;
+  const totalMin=Math.max(endMin-fromMin,60);
+  const H=totalMin*AG_PXMIN;
+  const soloAll = cols.length===1 && cols[0].id==="__all__";
+  const colOf=a=> soloAll ? "__all__" : (a.staff_id || "__none__");
+
+  let rail='<div class="ag-rail" style="height:'+H+'px">';
+  for(let m=fromMin;m<=endMin;m+=60){ rail+='<div class="ag-hour" style="top:'+((m-fromMin)*AG_PXMIN)+'px">'+agMinToTime(m)+'</div>'; }
+  rail+='</div>';
+
+  const step=AG_RULES.step||15;
+  const colsHtml=cols.map(c=>{
+    let lines='';
+    for(let m=fromMin;m<=endMin;m+=step){ lines+='<div class="ag-line" style="top:'+((m-fromMin)*AG_PXMIN)+'px"></div>'; }
+    const blocks=AG_APPTS.filter(a=>colOf(a)===c.id).map(a=>agBlockHtml(a,fromMin)).join("");
+    return '<div class="ag-col"><div class="ag-colhead" style="--c:'+esc(c.color)+'"><span class="ag-dot"></span>'+esc(c.name)+'</div>'+
+           '<div class="ag-colbody" data-staff="'+esc(String(c.id))+'" style="height:'+H+'px">'+lines+blocks+'</div></div>';
+  }).join("");
+
+  mount.innerHTML='<div class="ag-scroll"><div class="ag-inner">'+rail+'<div class="ag-cols">'+colsHtml+'</div></div></div>';
+  agBindPointer(mount, fromMin);
+}
+
+function agBlockHtml(a,fromMin){
+  const start=agToMin(a.booking_time.slice(0,5));
+  const dur=agDur(a);
+  const top=(start-fromMin)*AG_PXMIN;
+  const h=Math.max(dur*AG_PXMIN,22);
+  const svc=a.services?a.services.name:"";
+  const range=agMinToTime(start)+"–"+agMinToTime(start+dur);
+  return '<div class="ag-block '+a.status+'" data-id="'+a.id+'" style="top:'+top+'px; height:'+h+'px">'+
+    '<div class="ag-b-time">'+range+'</div>'+
+    '<div class="ag-b-name">'+esc(a.customer_name||"")+'</div>'+
+    (svc?'<div class="ag-b-svc">'+esc(svc)+'</div>':'')+
+    '<div class="ag-resize" data-resize="1"></div></div>';
+}
+
+function agBindPointer(mount, fromMin){
+  mount.onpointerdown=(e)=>{
+    const resize=e.target.closest(".ag-resize");
+    const block=e.target.closest(".ag-block");
+    const body=e.target.closest(".ag-colbody");
+    if(!body) return;
+    if(block){
+      e.preventDefault();
+      AG_DRAG={ mode: resize?"resize":"move", id:block.dataset.id, el:block,
+        startY:e.clientY, startX:e.clientX,
+        origTop:parseFloat(block.style.top)||0, origH:parseFloat(block.style.height)||22,
+        fromMin, moved:false };
+      if(block.setPointerCapture) block.setPointerCapture(e.pointerId);
+      block.classList.add(resize?"resizing":"moving");
+      return;
+    }
+    // tocco su spazio vuoto -> nuovo appuntamento con orario precompilato
+    const rect=body.getBoundingClientRect();
+    const min=agSnap(fromMin + (e.clientY-rect.top)/AG_PXMIN);
+    openAddModal({ date:AG_DATE, time:agMinToTime(Math.max(fromMin,min)) });
+  };
+  mount.onpointermove=(e)=>{
+    if(!AG_DRAG) return;
+    const dy=e.clientY-AG_DRAG.startY, dx=e.clientX-AG_DRAG.startX;
+    if(Math.abs(dy)>4||Math.abs(dx)>4) AG_DRAG.moved=true;
+    if(AG_DRAG.mode==="resize"){
+      AG_DRAG.el.style.height=Math.max(16, AG_DRAG.origH+dy)+"px";
+    } else {
+      AG_DRAG.el.style.top=(AG_DRAG.origTop+dy)+"px";
+      const under=document.elementFromPoint(e.clientX,e.clientY);
+      const tb=under&&under.closest?under.closest(".ag-colbody"):null;
+      if(tb && tb!==AG_DRAG.el.parentElement) tb.appendChild(AG_DRAG.el);
+    }
+  };
+  const finish=async()=>{
+    if(!AG_DRAG) return;
+    const D=AG_DRAG; AG_DRAG=null;
+    D.el.classList.remove("moving","resizing");
+    if(!D.moved){ const b=AG_APPTS.find(x=>x.id===D.id); if(b) agOpenMenu(b,D.el); return; }
+    if(D.mode==="resize"){
+      const newDur=Math.max(AG_RULES.step, agSnap(parseFloat(D.el.style.height)/AG_PXMIN));
+      await agUpdate(D.id,{ duration_min:newDur });
+    } else {
+      const body=D.el.closest(".ag-colbody");
+      const newStart=agSnap(D.fromMin + (parseFloat(D.el.style.top)/AG_PXMIN));
+      const raw=body?body.dataset.staff:null;
+      const patch={ booking_time:agMinToTime(Math.max(0,newStart)) };
+      patch.staff_id = (raw==="__none__"||raw==="__all__"||!raw) ? null : raw;
+      await agUpdate(D.id, patch);
+    }
+    loadAgenda();
+  };
+  mount.onpointerup=finish;
+  mount.onpointercancel=()=>{ if(AG_DRAG){ AG_DRAG.el.classList.remove("moving","resizing"); AG_DRAG=null; loadAgenda(); } };
+}
+
+async function agUpdate(id, patch){
+  const { error } = await sb.from("bookings").update(patch).eq("id",id);
+  if(error){ toast("Errore: "+error.message); return false; }
+  toast("Aggiornato"); return true;
+}
+
+function agOpenMenu(b, el){
+  agCloseMenu();
+  const wa = waDigits(b.customer_phone) ? '<a class="ag-mi" href="'+waLink(b.customer_phone)+'" target="_blank" rel="noopener">WhatsApp</a>' : '';
+  const conf = b.status!=="confermata" ? '<button class="ag-mi" data-agact="confermata">Conferma</button>' : '';
+  const ann  = b.status!=="annullata"  ? '<button class="ag-mi" data-agact="annullata">Annulla</button>' : '';
+  const m=document.createElement("div"); m.className="ag-menu"; m.id="agMenu";
+  m.innerHTML='<div class="ag-menu-h">'+esc(b.customer_name||"")+(b.services?' · '+esc(b.services.name):'')+'</div>'+conf+ann+wa+
+    '<button class="ag-mi del" data-agact="__del__">Elimina</button>';
+  document.body.appendChild(m);
+  const r=el.getBoundingClientRect();
+  m.style.top=(window.scrollY+r.bottom+6)+"px";
+  m.style.left=(window.scrollX+Math.max(8,Math.min(r.left, window.innerWidth-210)))+"px";
+  m.addEventListener("click", async ev=>{
+    const btn=ev.target.closest("[data-agact]"); if(!btn) return;
+    const act=btn.dataset.agact;
+    if(act==="__del__"){ if(!confirm("Eliminare questo appuntamento?")) return; await sb.from("bookings").delete().eq("id",b.id); }
+    else { await sb.from("bookings").update({status:act}).eq("id",b.id); }
+    agCloseMenu(); loadAgenda();
+  });
+}
+function agCloseMenu(){ const m=$("#agMenu"); if(m) m.remove(); }
+document.addEventListener("click",(e)=>{ if(!e.target.closest(".ag-menu") && !e.target.closest(".ag-block")) agCloseMenu(); });
+
+/* ---- gestione personale ---- */
+async function openStaffModal(){
+  const scope=svcScopeId(); if(!scope) return;
+  $("#staffMsg").className="msg";
+  $("#staffModal").classList.remove("hide");
+  await renderStaffList();
+}
+async function renderStaffList(){
+  const scope=svcScopeId();
+  const { data } = await sb.from("staff").select("id,name,color,active,sort_order").eq("client_id",scope).order("sort_order").order("name");
+  const rows=data||[];
+  $("#staffList").innerHTML = rows.length ? rows.map(s=>
+    '<div class="staff-item'+(s.active?'':' off')+'">'+
+      '<span class="staff-dot" style="background:'+esc(s.color||"#3b7a57")+'"></span>'+
+      '<span class="staff-name">'+esc(s.name)+(s.active?'':' · disattivato')+'</span>'+
+      (s.active?'<button class="chip staff-del" data-del="'+s.id+'">Rimuovi</button>'
+              :'<button class="chip staff-on" data-on="'+s.id+'">Riattiva</button>')+
+    '</div>').join("") : '<div class="empty" style="padding:14px">Ancora nessun operatore. Aggiungine uno qui sotto.</div>';
+}
+$("#staffClose") && $("#staffClose").addEventListener("click", ()=>{ $("#staffModal").classList.add("hide"); loadAgenda(); });
+$("#staffModal") && $("#staffModal").addEventListener("click", e=>{ if(e.target.id==="staffModal"){ $("#staffModal").classList.add("hide"); loadAgenda(); } });
+$("#staffAdd") && $("#staffAdd").addEventListener("click", async ()=>{
+  const scope=svcScopeId(); const name=$("#staffName").value.trim(); const color=$("#staffColor").value||"#3b7a57";
+  const m=$("#staffMsg"); m.className="msg";
+  if(!name){ m.className="msg err"; m.textContent="Inserisci un nome."; return; }
+  const { error } = await sb.from("staff").insert({ client_id:scope, name, color,
+    key:slugifyKey(name)+"-"+Math.random().toString(36).slice(2,6), sort_order:999 });
+  if(error){ m.className="msg err"; m.textContent=error.message; return; }
+  $("#staffName").value=""; renderStaffList();
+});
+$("#staffList") && $("#staffList").addEventListener("click", async e=>{
+  const del=e.target.closest("[data-del]"); const on=e.target.closest("[data-on]");
+  if(del){ await sb.from("staff").update({active:false}).eq("id",del.dataset.del); renderStaffList(); return; }
+  if(on){  await sb.from("staff").update({active:true}).eq("id",on.dataset.on);   renderStaffList(); return; }
+});
+
 
 /* =====================================================================
    AVVIO
