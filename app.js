@@ -1348,7 +1348,7 @@ $("#svcDelete").addEventListener("click", async ()=>{
 /* =====================================================================
    REPORT (incassi dove c'è prezzo, volumi sempre) — solo confermate
    ===================================================================== */
-let RPERIOD="week";
+let RPERIOD="week", RSECTION="tutte";
 function periodStart(p){
   const d=new Date(); d.setHours(0,0,0,0);
   if(p==="week"){ const g=(d.getDay()+6)%7; d.setDate(d.getDate()-g); }
@@ -1362,10 +1362,17 @@ document.querySelectorAll('#tab-reports .chip[data-rp]').forEach(c=>c.addEventLi
   document.querySelectorAll('#tab-reports .chip[data-rp]').forEach(x=>x.classList.remove("on"));
   c.classList.add("on"); RPERIOD=c.dataset.rp; loadReports();
 }));
+// filtro per sezione (chip + righe "Per sezione" cliccabili)
+$("#tab-reports").addEventListener("click", e=>{
+  const b=e.target.closest("[data-rsec]"); if(!b) return;
+  RSECTION=b.dataset.rsec; loadReports();
+});
+const NOSEC="(senza sezione)";
 async function loadReports(){
   const box=$("#reportBox"); box.innerHTML='<div class="loading">Carico…</div>';
+  const secBar=$("#reportSecFilter"); if(secBar) secBar.innerHTML="";
   let q=sb.from("bookings")
-    .select("booking_date,party_size,amount_cents,paid,status,services(name,price_cents)")
+    .select("booking_date,party_size,amount_cents,paid,status,services(name,price_cents,category)")
     .eq("status","confermata");
   if(ADMIN_CLIENT) q=q.eq("client_id",ADMIN_CLIENT.id);
   const from=periodStart(RPERIOD);
@@ -1374,36 +1381,75 @@ async function loadReports(){
   if(error){ box.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
   const rows=data||[];
 
-  let incasso=0, conPrezzo=0, coperti=0;
-  const perServ={};
+  // aggregazione per sezione
+  const perSection={};
+  const bump=sec=>(perSection[sec]||(perSection[sec]={count:0,coperti:0,incasso:0,conPrezzo:0,perServ:{}}));
   rows.forEach(b=>{
-    coperti += b.party_size||0;
+    const sec=(b.services&&b.services.category)?b.services.category:NOSEC;
+    const S=bump(sec);
+    S.count++; S.coperti+=b.party_size||0;
     let val=null;
     if(b.paid && b.amount_cents!=null) val=b.amount_cents;                                   // pagato online: già totale
     else if(b.services && b.services.price_cents!=null) val=b.services.price_cents*(b.party_size||1);  // a prezzo: × persone
-    if(val!=null){ incasso+=val; conPrezzo++;
-      const k=b.services?b.services.name:"Altro"; perServ[k]=(perServ[k]||0)+val;
-    }
+    if(val!=null){ S.incasso+=val; S.conPrezzo++;
+      const k=b.services?b.services.name:"Altro"; S.perServ[k]=(S.perServ[k]||0)+val; }
   });
-  const nomePeriodo={week:"questa settimana",month:"questo mese",year:"quest'anno",all:"da sempre"}[RPERIOD];
 
-  const serviziOrdinati=Object.entries(perServ).sort((a,b)=>b[1]-a[1]);
+  const realSecs=Object.keys(perSection).filter(s=>s!==NOSEC).sort((a,b)=>a.localeCompare(b,"it"));
+  const hasNoSec=!!perSection[NOSEC];
+  // reset selezione se la sezione scelta non esiste in questo periodo
+  if(RSECTION!=="tutte" && RSECTION!==NOSEC && !realSecs.includes(RSECTION)) RSECTION="tutte";
+  if(RSECTION===NOSEC && !hasNoSec) RSECTION="tutte";
+
+  // barra sezioni (solo se ci sono sezioni vere)
+  if(secBar){
+    if(realSecs.length){
+      const chips=[`<button class="chip ${RSECTION==="tutte"?"on":""}" data-rsec="tutte">Tutte</button>`]
+        .concat(realSecs.map(s=>`<button class="chip ${RSECTION===s?"on":""}" data-rsec="${esc(s)}">${esc(s)}</button>`));
+      if(hasNoSec) chips.push(`<button class="chip ${RSECTION===NOSEC?"on":""}" data-rsec="${esc(NOSEC)}">Senza sezione</button>`);
+      secBar.innerHTML=chips.join("");
+    } else secBar.innerHTML="";
+  }
+
+  // totali secondo la sezione selezionata
+  const empty=()=>({count:0,coperti:0,incasso:0,conPrezzo:0,perServ:{}});
+  let agg;
+  if(RSECTION==="tutte"){
+    agg=empty();
+    Object.values(perSection).forEach(S=>{ agg.count+=S.count; agg.coperti+=S.coperti; agg.incasso+=S.incasso; agg.conPrezzo+=S.conPrezzo;
+      for(const [k,v] of Object.entries(S.perServ)) agg.perServ[k]=(agg.perServ[k]||0)+v; });
+  } else agg=perSection[RSECTION]||empty();
+
+  const nomePeriodo={week:"questa settimana",month:"questo mese",year:"quest'anno",all:"da sempre"}[RPERIOD];
+  const secLabel = RSECTION==="tutte" ? "" : (RSECTION===NOSEC ? " · senza sezione" : " · "+RSECTION);
+  const serviziOrdinati=Object.entries(agg.perServ).sort((a,b)=>b[1]-a[1]);
+  const perSezioneOrd=realSecs.map(s=>[s,perSection[s]]).sort((a,b)=>b[1].incasso-a[1].incasso);
+
   box.innerHTML=`
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px">
-      <div class="card" style="margin:0"><p style="margin:0 0 4px">Prenotazioni confermate</p><div style="font-size:26px; font-weight:800">${rows.length}</div><div style="color:var(--muted); font-size:12px">${nomePeriodo}</div></div>
-      <div class="card" style="margin:0"><p style="margin:0 0 4px">Coperti / persone</p><div style="font-size:26px; font-weight:800">${coperti}</div><div style="color:var(--muted); font-size:12px">${nomePeriodo}</div></div>
+      <div class="card" style="margin:0"><p style="margin:0 0 4px">Prenotazioni confermate</p><div style="font-size:26px; font-weight:800">${agg.count}</div><div style="color:var(--muted); font-size:12px">${nomePeriodo}${secLabel}</div></div>
+      <div class="card" style="margin:0"><p style="margin:0 0 4px">Coperti / persone</p><div style="font-size:26px; font-weight:800">${agg.coperti}</div><div style="color:var(--muted); font-size:12px">${nomePeriodo}${secLabel}</div></div>
     </div>
-    ${conPrezzo>0 ? `
+    ${agg.conPrezzo>0 ? `
       <div class="card" style="text-align:center; margin-bottom:14px">
         <p style="margin:0 0 4px">Incasso stimato</p>
-        <div style="font-size:34px; font-weight:800; color:var(--ok)">${euro(incasso)}</div>
-        <div style="color:var(--muted); font-size:12px">su ${conPrezzo} prenotazioni con prezzo · ${nomePeriodo}</div>
-      </div>
+        <div style="font-size:34px; font-weight:800; color:var(--ok)">${euro(agg.incasso)}</div>
+        <div style="color:var(--muted); font-size:12px">su ${agg.conPrezzo} prenotazioni con prezzo · ${nomePeriodo}${secLabel}</div>
+      </div>` : ""}
+    ${(RSECTION==="tutte" && perSezioneOrd.length) ? `
       <div class="card">
-        <h3 style="margin:0 0 10px">Per servizio</h3>
+        <h3 style="margin:0 0 10px">Per sezione</h3>
+        ${perSezioneOrd.map(([n,S])=>`<div class="rp-row" data-rsec="${esc(n)}" style="display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-top:1px solid var(--line-soft); cursor:pointer">
+            <span>${esc(n)} <span style="color:var(--muted); font-size:12px">· ${S.count} pren.</span></span><b>${euro(S.incasso)}</b></div>`).join("")}
+        ${hasNoSec?`<div class="rp-row" data-rsec="${esc(NOSEC)}" style="display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-top:1px solid var(--line-soft); cursor:pointer">
+            <span>Senza sezione <span style="color:var(--muted); font-size:12px">· ${perSection[NOSEC].count} pren.</span></span><b>${euro(perSection[NOSEC].incasso)}</b></div>`:""}
+      </div>` : ""}
+    ${serviziOrdinati.length ? `
+      <div class="card">
+        <h3 style="margin:0 0 10px">Per servizio${secLabel}</h3>
         ${serviziOrdinati.map(([n,v])=>`<div style="display:flex; justify-content:space-between; padding:7px 0; border-top:1px solid var(--line-soft)"><span>${esc(n)}</span><b>${euro(v)}</b></div>`).join("")}
       </div>`
-    : `<div class="empty">Nessun servizio con prezzo in questo periodo. Per le attività a posti (ristoranti) il report mostra solo i volumi qui sopra.</div>`}
+    : (agg.conPrezzo===0 ? `<div class="empty">Nessun servizio con prezzo in questo periodo. Per le attività a posti (ristoranti) il report mostra solo i volumi qui sopra.</div>` : "")}
   `;
 }
 
