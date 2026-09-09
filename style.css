@@ -272,3 +272,6 @@ input,select{font-family:inherit}
 [data-theme="dark"] .ag-block.in_attesa{ background:#2A2410; border-color:#4A3D18 }
 [data-theme="dark"] .ag-resize::after{ background:rgba(255,255,255,.28) }
 #themeBtn{ font-size:15px; line-height:1 }
+
+/* larghezza piena agenda anche su browser senza :has() (Safari vecchi) */
+#tab-bookings.ag-open{ max-width:none; padding-left:6px; padding-right:6px }
