@@ -960,6 +960,7 @@ async function openAddModal(prefill){
   $("#mType").innerHTML = BTYPES.map(t=>`<option value="${esc(t.key)}">${esc(t.label)}</option>`).join("");
   $("#mDate").value = (prefill&&prefill.date) || isoToday(0);
   $("#mTime").value = (prefill&&prefill.time) || "";
+  AG_CREATE_STAFF = (prefill&&prefill.staff) || null;
   $("#mParty").value = 1;
   $("#mStatus").value = "confermata";
   $("#mName").value = ""; $("#mPhone").value = ""; $("#mNotes").value = "";
@@ -1050,7 +1051,7 @@ async function saveManualBooking(){
   const { data, error } = await sb.rpc("create_manual_booking",{
     p_type_key:type, p_name:name, p_phone: phone||null, p_date:date,
     p_time: time||null, p_party:party, p_status:status, p_notes: notes||null,
-    p_service_key: service_key
+    p_service_key: service_key, p_staff_id: (typeof AG_CREATE_STAFF!=="undefined" ? AG_CREATE_STAFF : null)
   });
   $("#addSave").disabled=false; $("#addSave").textContent="Salva prenotazione";
   if(error || !data || !data.ok){
@@ -1499,6 +1500,7 @@ var AG_APPTS=[];
 var AG_RULES={from:"09:30",to:"18:30",step:15};
 var AG_PXMIN=1.35;          // pixel per minuto
 var AG_DRAG=null;
+var AG_CREATE_STAFF=null, AG_REVIEW_URL="", AG_CLIENT_NAME="";
 
 function agToMin(hhmm){ const p=String(hhmm||"0:0").split(":"); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0); }
 function agMinToTime(min){ min=Math.max(0,Math.round(min)); const h=Math.floor(min/60), m=min%60; return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0"); }
@@ -1543,11 +1545,12 @@ async function loadAgenda(){
   const r=(bt&&bt.rules)||{};
   AG_RULES={ from:r.time_from||"09:30", to:r.time_to||"18:30", step:parseInt(r.slot_minutes,10)||15 };
   const { data:appts, error } = await sb.from("bookings")
-    .select("id,customer_name,customer_phone,booking_time,status,notes,staff_id,duration_min,booking_types!inner(key),services(name,duration_min,category)")
+    .select("id,customer_name,customer_phone,booking_time,status,notes,staff_id,duration_min,wa_stage,booking_types!inner(key),services(name,duration_min,category)")
     .eq("client_id",scope).eq("booking_date",AG_DATE).eq("booking_types.key","appuntamento")
     .in("status",["in_attesa","confermata"]).not("booking_time","is",null);
   if(error){ mount.innerHTML='<div class="empty">Errore nel caricamento.</div>'; return; }
   AG_APPTS=appts||[];
+  try{ const {data:cli}=await sb.from("clients").select("name,review_url").eq("id",scope).maybeSingle(); if(cli){ AG_CLIENT_NAME=cli.name||""; AG_REVIEW_URL=cli.review_url||""; } }catch(_){ }
   renderAgenda();
 }
 
@@ -1648,7 +1651,8 @@ function agBindPointer(mount, fromMin){
       if(!moved && quick){
         const rect=body.getBoundingClientRect();
         const min=agSnap(fromMin + (cy-rect.top)/AG_PXMIN);
-        openAddModal({ date:AG_DATE, time:agMinToTime(Math.max(fromMin,min)) });
+        const raw=body.dataset.staff; const staff=(raw && raw.indexOf("__")!==0)?raw:null;
+        openAddModal({ date:AG_DATE, time:agMinToTime(Math.max(fromMin,min)), staff:staff });
       }
       return;
     }
@@ -1682,11 +1686,16 @@ async function agUpdate(id, patch){
 
 function agOpenMenu(b, el){
   agCloseMenu();
-  const wa = waDigits(b.customer_phone) ? '<a class="ag-mi" href="'+waLink(b.customer_phone)+'" target="_blank" rel="noopener">WhatsApp</a>' : '';
-  const conf = b.status!=="confermata" ? '<button class="ag-mi" data-agact="confermata">Conferma</button>' : '';
-  const ann  = b.status!=="annullata"  ? '<button class="ag-mi" data-agact="annullata">Annulla</button>' : '';
+  const phone=waDigits(b.customer_phone);
+  let waHtml="";
+  if(phone){
+    if((b.wa_stage||0) < 1) waHtml='<button class="ag-mi" data-agact="wa">Conferma su WhatsApp</button>';
+    else if(AG_REVIEW_URL) waHtml='<button class="ag-mi" data-agact="warev">Recensione su WhatsApp</button>';
+  }
+  const conf = b.status!=="confermata" ? '<button class="ag-mi" data-agact="confermata">Conferma</button>' : "";
+  const ann  = b.status!=="annullata"  ? '<button class="ag-mi" data-agact="annullata">Annulla</button>' : "";
   const m=document.createElement("div"); m.className="ag-menu"; m.id="agMenu";
-  m.innerHTML='<div class="ag-menu-h">'+esc(b.customer_name||"")+(b.services?' · '+esc(b.services.name):'')+'</div>'+conf+ann+wa+
+  m.innerHTML='<div class="ag-menu-h">'+esc(b.customer_name||"")+(b.services?" \u00b7 "+esc(b.services.name):"")+'</div>'+conf+ann+waHtml+
     '<button class="ag-mi del" data-agact="__del__">Elimina</button>';
   document.body.appendChild(m);
   const r=el.getBoundingClientRect();
@@ -1695,6 +1704,18 @@ function agOpenMenu(b, el){
   m.addEventListener("click", async ev=>{
     const btn=ev.target.closest("[data-agact]"); if(!btn) return;
     const act=btn.dataset.agact;
+    if(act==="wa"){
+      const ora=(b.booking_time||"").slice(0,5);
+      const msg="Ciao "+(b.customer_name||"")+", confermiamo il tuo appuntamento"+(b.services?" per "+b.services.name:"")+" da "+(AG_CLIENT_NAME||"")+" il "+fmtDay(AG_DATE)+" alle "+ora+". A presto!";
+      window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(msg),"_blank");
+      await sb.from("bookings").update({wa_stage:1}).eq("id",b.id);
+      agCloseMenu(); loadAgenda(); return;
+    }
+    if(act==="warev"){
+      const msg="Ciao "+(b.customer_name||"")+", grazie per essere passato/a da "+(AG_CLIENT_NAME||"")+"! Se ti \u00e8 piaciuta l\u2019esperienza ci lasceresti una recensione? "+AG_REVIEW_URL;
+      window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(msg),"_blank");
+      agCloseMenu(); return;
+    }
     if(act==="__del__"){ if(!confirm("Eliminare questo appuntamento?")) return; await sb.from("bookings").delete().eq("id",b.id); }
     else { await sb.from("bookings").update({status:act}).eq("id",b.id); }
     agCloseMenu(); loadAgenda();
