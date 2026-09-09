@@ -1490,6 +1490,7 @@ function agShiftDay(iso,delta){ const d=new Date(iso+"T00:00:00"); d.setDate(d.g
 // mostra lista o agenda dentro il tab Prenotazioni
 function agApplyView(){
   const isAg = AG_VIEW==="agenda";
+  const tab=$("#tab-bookings"); if(tab) tab.classList.toggle("ag-open", isAg);   // larghezza piena senza dipendere da :has()
   const hasAppt = (typeof BTYPES!=="undefined") && BTYPES.some(t=>t.key==="appuntamento");
   const ab=$("#bkViewAgenda"); if(ab) ab.classList.toggle("hide", !hasAppt);
   const tg=$("#bkViewList")?.parentElement; if(tg) tg.classList.toggle("hide", !hasAppt);   // niente toggle se non è un'agenda
