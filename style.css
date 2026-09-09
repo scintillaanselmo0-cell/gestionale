@@ -218,14 +218,12 @@ input,select{font-family:inherit}
 .ag-head{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px}
 .ag-hint{font-size:12px; color:var(--muted); margin:10px 2px 0}
 .ag-grid{position:relative}
-#tab-bookings:has(#agendaView:not(.hide)){ max-width:none; padding-left:6px; padding-right:6px }
-.ag-scroll{overflow:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--line); border-radius:12px; background:var(--card);
-  height:calc(100vh - 220px); height:calc(100dvh - 220px); min-height:440px}
-.ag-inner{display:flex; width:100%}
+.ag-scroll{overflow-x:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--line); border-radius:12px; background:var(--card)}
+.ag-inner{display:flex; min-width:max-content}
 .ag-rail{position:relative; width:52px; flex:0 0 52px; border-right:1px solid var(--line); margin-top:34px}
 .ag-hour{position:absolute; left:0; right:5px; transform:translateY(-50%); font-size:11px; color:var(--muted); text-align:right}
-.ag-cols{display:flex; flex:1}
-.ag-col{flex:1 1 130px; max-width:190px; border-right:1px solid var(--line-soft)}
+.ag-cols{display:flex}
+.ag-col{width:180px; flex:0 0 180px; border-right:1px solid var(--line-soft)}
 .ag-colhead{height:34px; display:flex; align-items:center; gap:7px; padding:0 10px; font-size:13px; font-weight:700; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--card); z-index:2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .ag-dot{width:9px; height:9px; border-radius:50%; background:var(--c,#3b7a57); flex:0 0 9px}
 .ag-colbody{position:relative}
@@ -251,3 +249,26 @@ input,select{font-family:inherit}
 .staff-item.off{opacity:.55}
 .staff-dot{width:14px; height:14px; border-radius:50%; flex:0 0 14px}
 .staff-name{flex:1; font-size:14px}
+
+
+/* ===== TEMA SCURO (nero e oro) ===== */
+[data-theme="dark"]{
+  --paper:#0F1110;  --card:#191C1B;  --ink:#F2EFE9;  --muted:#9BA39F;
+  --line:#2C302E;   --line-soft:#232725;
+  --spark:#E9B53C;                 /* oro piu luminoso sul nero */
+  --ok:#4FB98C;   --ok-bg:#122A22;   --ok-line:#1E4638;
+  --warn:#D9AE52; --warn-bg:#2A2413; --warn-line:#4A3D1C;
+  --stop:#E0705E; --stop-bg:#2A1713; --stop-line:#4A251E;
+  --sh:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -18px rgba(0,0,0,.8);
+}
+/* pulsanti "pieni" (sul chiaro neri con testo bianco) -> oro con testo nero */
+[data-theme="dark"] .btn,
+[data-theme="dark"] .chip.on,
+[data-theme="dark"] #selectToggle.on,
+[data-theme="dark"] .toast{ background:var(--spark); color:#141210; border-color:var(--spark) }
+[data-theme="dark"] #agAdd{ background:var(--spark)!important; color:#141210!important; border-color:var(--spark)!important }
+/* superfici con colori fissi */
+[data-theme="dark"] .topbar{ background:rgba(15,17,16,.9) }
+[data-theme="dark"] .ag-block.in_attesa{ background:#2A2410; border-color:#4A3D18 }
+[data-theme="dark"] .ag-resize::after{ background:rgba(255,255,255,.28) }
+#themeBtn{ font-size:15px; line-height:1 }
