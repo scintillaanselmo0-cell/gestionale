@@ -1389,7 +1389,7 @@ async function loadReports(){
   const box=$("#reportBox"); box.innerHTML='<div class="loading">Carico…</div>';
   const secBar=$("#reportSecFilter"); if(secBar) secBar.innerHTML="";
   let q=sb.from("bookings")
-    .select("booking_date,party_size,amount_cents,paid,status,services(name,price_cents,category)")
+    .select("booking_date,party_size,amount_cents,paid,status,staff_id,staff(name),services(name,price_cents,category)")
     .eq("status","confermata");
   if(ADMIN_CLIENT) q=q.eq("client_id",ADMIN_CLIENT.id);
   const from=periodStart(RPERIOD);
@@ -1428,6 +1428,20 @@ async function loadReports(){
     } else secBar.innerHTML="";
   }
 
+  // aggregazione per operatore (rispetta la sezione selezionata) — si aggiorna da sola quando sposti un appuntamento
+  const perOper={};
+  rows.forEach(b=>{
+    const sec=(b.services&&b.services.category)?b.services.category:NOSEC;
+    if(RSECTION!=="tutte" && sec!==RSECTION) return;
+    let val=null;
+    if(b.paid && b.amount_cents!=null) val=b.amount_cents;
+    else if(b.services && b.services.price_cents!=null) val=b.services.price_cents*(b.party_size||1);
+    const op = agIsSpa(b) ? "Hair Spa" : ((b.staff && b.staff.name) ? b.staff.name : "Senza operatore");
+    const O=perOper[op]||(perOper[op]={count:0,incasso:0});
+    O.count++; if(val!=null) O.incasso+=val;
+  });
+  const perOperOrd=Object.entries(perOper).sort((a,b)=>b[1].incasso-a[1].incasso);
+
   // totali secondo la sezione selezionata
   const empty=()=>({count:0,coperti:0,incasso:0,conPrezzo:0,perServ:{}});
   let agg;
@@ -1452,6 +1466,11 @@ async function loadReports(){
         <p style="margin:0 0 4px">Incasso stimato</p>
         <div style="font-size:34px; font-weight:800; color:var(--ok)">${euro(agg.incasso)}</div>
         <div style="color:var(--muted); font-size:12px">su ${agg.conPrezzo} prenotazioni con prezzo · ${nomePeriodo}${secLabel}</div>
+      </div>` : ""}
+    ${perOperOrd.length ? `
+      <div class="card">
+        <h3 style="margin:0 0 10px">Per operatore${secLabel}</h3>
+        ${perOperOrd.map(([n,O])=>`<div style="display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-top:1px solid var(--line-soft)"><span>${esc(n)} <span style="color:var(--muted); font-size:12px">\u00b7 ${O.count} pren.</span></span><b>${euro(O.incasso)}</b></div>`).join("")}
       </div>` : ""}
     ${(RSECTION==="tutte" && perSezioneOrd.length) ? `
       <div class="card">
@@ -1532,12 +1551,19 @@ async function loadAgenda(){
   renderAgenda();
 }
 
+function agIsSpa(a){ return !!(a.services && a.services.category && /hair *spa/i.test(a.services.category)); }
+function agHue(id){ let h=0; const s=String(id||""); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return Math.floor((h*137.508)%360); }
 function renderAgenda(){
   const mount=$("#agendaGrid");
+  const spa=AG_APPTS.filter(agIsSpa);
+  const nonSpa=AG_APPTS.filter(a=>!agIsSpa(a));
+  const noStaff = AG_STAFF.length===0;
   let cols=AG_STAFF.map(s=>({id:s.id,name:s.name,color:s.color||"#3b7a57"}));
-  const unassigned=AG_APPTS.filter(a=>!a.staff_id);
-  if(!cols.length){ cols=[{id:"__all__",name:"Agenda",color:"#6b7370"}]; }
-  else if(unassigned.length){ cols.push({id:"__none__",name:"Non assegnati",color:"#9aa3a0"}); }
+  if(noStaff && nonSpa.length) cols=[{id:"__all__",name:"Agenda",color:"#6b7370"}];
+  if(spa.length) cols.push({id:"__spa__",name:"Hair Spa",color:"#B8986A"});
+  const unassigned=nonSpa.filter(a=>!a.staff_id);
+  if(!noStaff && unassigned.length) cols.push({id:"__none__",name:"Non assegnati",color:"#9aa3a0"});
+  if(!cols.length) cols=[{id:"__all__",name:"Agenda",color:"#6b7370"}];
 
   const fromMin=Math.floor(agToMin(AG_RULES.from)/60)*60;
   let endMin=agToMin(AG_RULES.to);
@@ -1545,8 +1571,7 @@ function renderAgenda(){
   endMin=Math.ceil(endMin/60)*60;
   const totalMin=Math.max(endMin-fromMin,60);
   const H=totalMin*AG_PXMIN;
-  const soloAll = cols.length===1 && cols[0].id==="__all__";
-  const colOf=a=> soloAll ? "__all__" : (a.staff_id || "__none__");
+  const colOf=a=> agIsSpa(a) ? "__spa__" : (noStaff ? "__all__" : (a.staff_id || "__none__"));
 
   let rail='<div class="ag-rail" style="height:'+H+'px">';
   for(let m=fromMin;m<=endMin;m+=60){ rail+='<div class="ag-hour" style="top:'+((m-fromMin)*AG_PXMIN)+'px">'+agMinToTime(m)+'</div>'; }
@@ -1572,8 +1597,11 @@ function agBlockHtml(a,fromMin){
   const h=Math.max(dur*AG_PXMIN,22);
   const svc=a.services?a.services.name:"";
   const range=agMinToTime(start)+"–"+agMinToTime(start+dur);
-  return '<div class="ag-block '+a.status+'" data-id="'+a.id+'" style="top:'+top+'px; height:'+h+'px">'+
-    '<div class="ag-b-time">'+range+'</div>'+
+  const hue=agHue(a.id);
+  const st="top:"+top+"px; height:"+h+"px; background:hsla("+hue+",68%,55%,.20); border-color:hsla("+hue+",60%,45%,.9)";
+  const dot=a.status==="confermata"?"#1F7A5A":(a.status==="annullata"?"#b3261e":"#D6A94A");
+  return '<div class="ag-block '+a.status+'" data-id="'+a.id+'" style="'+st+'">'+
+    '<div class="ag-b-time"><span class="ag-b-dot" style="background:'+dot+'"></span>'+range+'</div>'+
     '<div class="ag-b-name">'+esc(a.customer_name||"")+'</div>'+
     (svc?'<div class="ag-b-svc">'+esc(svc)+'</div>':'')+
     '<div class="ag-resize" data-resize="1"></div></div>';
