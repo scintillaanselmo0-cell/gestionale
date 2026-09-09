@@ -15,6 +15,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
+<script>try{if(localStorage.getItem('scintilla-theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
 </head>
 <body>
 
@@ -42,6 +43,7 @@
     <div class="brand"><span class="spark"></span>Scintilla</div>
     <div style="display:flex; align-items:center; gap:10px">
       <div id="clientTag" class="client-tag"></div>
+      <button id="themeBtn" class="icon-btn" title="Tema scuro" aria-label="Cambia tema">☾</button>
       <button id="logoutBtn" class="icon-btn">Esci</button>
     </div>
   </header>
@@ -325,5 +327,14 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="app.js"></script>
+<script>
+(function(){
+  var root=document.documentElement;
+  function updateBtn(){ var b=document.getElementById('themeBtn'); if(b){ var d=root.getAttribute('data-theme')==='dark'; b.textContent=d?'☀︎':'☾'; b.title=d?'Tema chiaro':'Tema scuro'; } }
+  function setTheme(t){ if(t==='dark') root.setAttribute('data-theme','dark'); else root.removeAttribute('data-theme'); try{localStorage.setItem('scintilla-theme',t);}catch(e){} updateBtn(); }
+  document.addEventListener('click', function(e){ var b=e.target.closest&&e.target.closest('#themeBtn'); if(!b) return; setTheme(root.getAttribute('data-theme')==='dark'?'light':'dark'); });
+  updateBtn();
+})();
+</script>
 </body>
 </html>
