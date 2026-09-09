@@ -1594,7 +1594,7 @@ function agBlockHtml(a,fromMin){
   const start=agToMin(a.booking_time.slice(0,5));
   const dur=agDur(a);
   const top=(start-fromMin)*AG_PXMIN;
-  const h=Math.max(dur*AG_PXMIN,22);
+  const h=Math.max(dur*AG_PXMIN,56);   // minimo per mostrare orario + nome + servizio
   const svc=a.services?a.services.name:"";
   const range=agMinToTime(start)+"–"+agMinToTime(start+dur);
   const hue=agHue(a.id);
