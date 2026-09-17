@@ -22,6 +22,7 @@ let BTYPES = [];           // tipi di prenotazione del cliente (per l'aggiunta m
 let LAST_BOOKINGS = [];    // ultime prenotazioni caricate (per i link WhatsApp)
 const DEFAULT_CONFIRM = "Ciao {nome}! La tua prenotazione da {attivita} è confermata per {data} alle {ora} ({persone} persone). Ti aspettiamo!";
 let NEW_COUNT = 0;         // nuove prenotazioni non ancora viste
+let MY_UID = null;         // id utente loggato (per i promemoria)
 
 /* ---- utility ---- */
 const $ = s => document.querySelector(s);
@@ -131,6 +132,7 @@ $("#logoutBtn").addEventListener("click", async ()=>{ await sb.auth.signOut(); l
 async function boot(){
   const { data:{ user } } = await sb.auth.getUser();
   if(!user){ showLogin(); return; }
+  MY_UID = user.id;
 
   const { data:prof, error:pe } = await sb.from("profiles").select("role,client_id").eq("user_id",user.id).single();
   if(pe || !prof){ await sb.auth.signOut(); showLogin("Account non collegato a nessuna attività."); return; }
@@ -149,6 +151,7 @@ async function boot(){
     $("#adminTabBtn").classList.remove("hide");
     $("#loginView").classList.add("hide");
     $("#appView").classList.remove("hide");
+    remDueBadge();
     switchTab("admin");
     return;
   }
@@ -156,7 +159,7 @@ async function boot(){
   // --- TITOLARE: tab dinamiche dai moduli attivi ---
   const { data:mods } = await sb.from("client_modules").select("module_key,enabled").eq("client_id",CLIENT.id);
   let enabled = (mods||[]).filter(m=>m.enabled).map(m=>m.module_key);
-  if(!enabled.length) enabled = ["prenotazioni","storico","clienti","report","impostazioni"];   // default sensato
+  if(!enabled.length) enabled = ["prenotazioni","storico","clienti","report","impostazioni","promemoria"];   // default sensato
   let firstTab = null;
   document.querySelectorAll('.tab[data-mod]').forEach(t=>{
     const on = enabled.includes(t.dataset.mod);
@@ -173,6 +176,7 @@ async function boot(){
 
   $("#loginView").classList.add("hide");
   $("#appView").classList.remove("hide");
+  remDueBadge();
   switchTab(firstTab || "bookings");
 }
 
@@ -198,13 +202,14 @@ function switchTab(name){
   if(SELECT_MODE) exitSelect();
   if(name==="bookings") clearNewBadge();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
-  ["bookings","history","customers","services","reports","vouchers","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
+  ["bookings","history","customers","services","reports","vouchers","reminders","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
   if(name==="bookings"){ loadBookings(); agApplyView(); }
   if(name==="history")  loadHistory();
   if(name==="customers") loadCustomers();
   if(name==="services") loadServices();
   if(name==="reports")  loadReports();
   if(name==="vouchers") loadVouchers();
+  if(name==="reminders") loadReminders();
   if(name==="settings") loadSettings();
   if(name==="admin")    loadAdmin();
 }
@@ -749,7 +754,7 @@ function openNewClient(){
 
         <h3 style="font-size:14px; margin:18px 0 8px">Moduli attivi</h3>
         <div style="display:flex; gap:6px; flex-wrap:wrap" id="ncMods">
-          ${[["prenotazioni","Prenotazioni",true],["storico","Storico",true],["clienti","Clienti",true],["servizi","Servizi",false],["report","Report",true],["impostazioni","Impostazioni",true],["voucher","Voucher",false]]
+          ${[["prenotazioni","Prenotazioni",true],["storico","Storico",true],["clienti","Clienti",true],["servizi","Servizi",false],["report","Report",true],["promemoria","Promemoria",true],["impostazioni","Impostazioni",true],["voucher","Voucher",false]]
             .map(m=>`<button type="button" class="chip ${m[2]?"on ":""}nc-mod" data-mod="${m[0]}">${m[1]}</button>`).join("")}
         </div>
 
@@ -1760,6 +1765,299 @@ $("#staffList") && $("#staffList").addEventListener("click", async e=>{
   if(on){  await sb.from("staff").update({active:true}).eq("id",on.dataset.on);   renderStaffList(); return; }
 });
 
+
+
+/* =====================================================================
+   PROMEMORIA — sezione impegni (super admin + titolari)
+   Tabelle: reminders, reminder_events · RPC: reminder_mark_done
+   ===================================================================== */
+let REM=[], REM_VIEW="todo", REM_SORT="due", REM_RP="month";
+let REM_CLIENTS=null, REM_CLIENT_MAP=null, REM_EDIT_ID=null;
+
+function remIsSuper(){ return ME && ME.role==="super_admin"; }
+function remOwnerClientId(){ return remIsSuper() ? null : (CLIENT?CLIENT.id:null); }
+function remKindLbl(k){ return ({generico:"Generico",attivazione:"Attivazione",annuale:"Canone annuale"})[k]||""; }
+function remPeriodStart(p){
+  const d=new Date(); d.setHours(0,0,0,0);
+  if(p==="week"){ const g=(d.getDay()+6)%7; d.setDate(d.getDate()-g); }
+  else if(p==="month"){ d.setDate(1); }
+  else if(p==="year"){ d.setMonth(0,1); }
+  else return null;
+  return ymd(d);
+}
+async function remEnsureClients(){
+  if(REM_CLIENT_MAP) return;
+  REM_CLIENT_MAP={};
+  const { data } = await sb.from("clients").select("id,name").order("name");
+  REM_CLIENTS=data||[];
+  REM_CLIENTS.forEach(c=>{ REM_CLIENT_MAP[c.id]=c.name; });
+}
+function eurToCents(v){
+  if(v==null) return null; const s=String(v).trim().replace(",",".");
+  if(s==="") return null; const n=parseFloat(s); return isNaN(n)?null:Math.round(n*100);
+}
+
+/* ---- toolbar: viste, ordinamento, ricerca, periodo report ---- */
+document.querySelectorAll('#tab-reminders .chip[data-rv]').forEach(c=>c.addEventListener("click",()=>{
+  document.querySelectorAll('#tab-reminders .chip[data-rv]').forEach(x=>x.classList.remove("on"));
+  c.classList.add("on"); REM_VIEW=c.dataset.rv;
+  $("#remTools").classList.toggle("hide", REM_VIEW==="report");
+  $("#remReportPeriod").classList.toggle("hide", REM_VIEW!=="report");
+  loadReminders();
+}));
+$("#remSort") && $("#remSort").addEventListener("change", ()=>{ REM_SORT=$("#remSort").value; renderReminders(); });
+$("#remSearch") && $("#remSearch").addEventListener("input", ()=>{ if(REM_VIEW==="todo"||REM_VIEW==="overdue") renderReminders(); });
+document.querySelectorAll('#remReportPeriod .chip[data-rvp]').forEach(c=>c.addEventListener("click",()=>{
+  document.querySelectorAll('#remReportPeriod .chip[data-rvp]').forEach(x=>x.classList.remove("on"));
+  c.classList.add("on"); REM_RP=c.dataset.rvp; loadRemReport();
+}));
+
+/* ---- load ---- */
+async function loadReminders(){
+  remRenderPush();
+  const box=$("#remBox"); box.innerHTML='<div class="loading">Carico…</div>';
+  await remEnsureClients();
+  if(REM_VIEW==="history") return loadRemHistory();
+  if(REM_VIEW==="report")  return loadRemReport();
+  const { data, error } = await sb.from("reminders")
+    .select("id,title,notes,amount_cents,kind,due_date,recurrence,status,sort_order,target_client_id,created_at")
+    .eq("status","aperto").limit(3000);
+  if(error){ box.innerHTML='<div class="empty">Errore: '+esc(error.message)+'</div>'; return; }
+  REM=data||[]; renderReminders();
+}
+
+function renderReminders(){
+  const box=$("#remBox"); const today=isoToday();
+  let rows=REM.slice();
+  if(REM_VIEW==="overdue") rows=rows.filter(r=>r.due_date && r.due_date<today);
+  const term=($("#remSearch").value||"").trim().toLowerCase();
+  if(term) rows=rows.filter(r=>(r.title||"").toLowerCase().includes(term)||(r.notes||"").toLowerCase().includes(term));
+  if(REM_SORT==="due") rows.sort((a,b)=>{ const A=a.due_date||"9999-99", B=b.due_date||"9999-99"; return A<B?-1:A>B?1:(a.sort_order-b.sort_order); });
+  else if(REM_SORT==="manual") rows.sort((a,b)=>(a.sort_order-b.sort_order)||(a.created_at<b.created_at?1:-1));
+  else rows.sort((a,b)=> a.created_at<b.created_at?1:-1);
+  if(!rows.length){ box.innerHTML='<div class="empty"><div class="big">✓</div>'+(REM_VIEW==="overdue"?"Nessun promemoria scaduto.":"Niente da fare. Tocca “+ Aggiungi”.")+'</div>'; return; }
+  box.innerHTML=rows.map((r,i)=>remCardHtml(r,today,i,rows.length)).join("");
+}
+
+function remCardHtml(r,today,i,n){
+  const over=r.due_date && r.due_date<today, soon=r.due_date && r.due_date===today;
+  const cname=r.target_client_id && REM_CLIENT_MAP ? REM_CLIENT_MAP[r.target_client_id] : "";
+  const badges=[];
+  if(r.kind!=="generico") badges.push('<span class="rem-badge kind">'+remKindLbl(r.kind)+'</span>');
+  if(r.recurrence==="annual") badges.push('<span class="rem-badge annual">Ogni anno</span>');
+  if(over) badges.push('<span class="rem-badge over">Scaduto</span>');
+  else if(soon) badges.push('<span class="rem-badge due">Oggi</span>');
+  const move=REM_SORT==="manual"
+    ? '<div class="rem-move"><button data-mv="up" data-id="'+r.id+'"'+(i===0?' disabled':'')+'>▲</button><button data-mv="down" data-id="'+r.id+'"'+(i===n-1?' disabled':'')+'>▼</button></div>'
+    : "";
+  return '<div class="rem" data-id="'+r.id+'">'+
+    '<div class="rem-top"><div style="min-width:0">'+
+      '<div class="rem-title">'+esc(r.title)+'</div>'+
+      (r.notes?'<div class="rem-notes">'+esc(r.notes)+'</div>':'')+
+      '<div class="rem-meta">'+
+        (r.due_date?'<span>📅 <b>'+fmtDate(r.due_date)+'</b></span>':'')+
+        (cname?'<span>🏷 '+esc(cname)+'</span>':'')+ badges.join(" ")+
+      '</div>'+
+    '</div><div style="display:flex; align-items:flex-start; gap:8px">'+
+      (r.amount_cents!=null?'<div class="rem-amt">'+euro(r.amount_cents)+'</div>':'')+ move +
+    '</div></div>'+
+    '<div class="actions">'+
+      '<button class="act confirm" data-rdone="'+r.id+'">Fatto</button>'+
+      '<button class="act" data-rsnooze="'+r.id+'">Posticipa</button>'+
+      '<button class="act" data-redit="'+r.id+'">Modifica</button>'+
+      '<button class="act cancel" data-rcancel="'+r.id+'">Annulla</button>'+
+      '<button class="act del" data-rdel="'+r.id+'">Elimina</button>'+
+    '</div></div>';
+}
+
+/* ---- azioni ---- */
+$("#remBox") && $("#remBox").addEventListener("click", async e=>{
+  const done=e.target.closest("[data-rdone]");
+  if(done){ const {error}=await sb.rpc("reminder_mark_done",{p_id:done.dataset.rdone}); if(error){toast("Errore: "+error.message);return;} toast("Segnato come fatto"); loadReminders(); remDueBadge(); return; }
+  const sn=e.target.closest("[data-rsnooze]");
+  if(sn){ const r=REM.find(x=>x.id===sn.dataset.rsnooze); const base=r&&r.due_date?new Date(r.due_date+"T00:00:00"):new Date(); base.setDate(base.getDate()+7); const nd=ymd(base);
+          await sb.from("reminders").update({due_date:nd}).eq("id",sn.dataset.rsnooze); toast("Posticipato al "+fmtDate(nd)); loadReminders(); remDueBadge(); return; }
+  const ca=e.target.closest("[data-rcancel]");
+  if(ca){ await sb.from("reminders").update({status:"annullato"}).eq("id",ca.dataset.rcancel); toast("Annullato"); loadReminders(); remDueBadge(); return; }
+  const de=e.target.closest("[data-rdel]");
+  if(de){ if(!confirm("Eliminare questo promemoria?")) return; await sb.from("reminders").delete().eq("id",de.dataset.rdel); toast("Eliminato"); loadReminders(); remDueBadge(); return; }
+  const ed=e.target.closest("[data-redit]");
+  if(ed){ const r=REM.find(x=>x.id===ed.dataset.redit); if(r) openRemModal(r); return; }
+  const mv=e.target.closest("[data-mv]");
+  if(mv){ await remMove(mv.dataset.id, mv.dataset.mv); return; }
+  const rp=e.target.closest("[data-rreopen]");
+  if(rp){ await sb.from("reminders").update({status:"aperto"}).eq("id",rp.dataset.rreopen); toast("Riaperto"); loadReminders(); remDueBadge(); return; }
+});
+
+async function remMove(id,dir){
+  const box=$("#remBox"); const ids=[...box.querySelectorAll(".rem")].map(el=>el.dataset.id);
+  const i=ids.indexOf(id); if(i<0) return;
+  const j=dir==="up"?i-1:i+1; if(j<0||j>=ids.length) return;
+  const t=ids[i]; ids[i]=ids[j]; ids[j]=t;
+  await Promise.all(ids.map((rid,idx)=>sb.from("reminders").update({sort_order:idx}).eq("id",rid)));
+  ids.forEach((rid,idx)=>{ const r=REM.find(x=>x.id===rid); if(r) r.sort_order=idx; });
+  renderReminders();
+}
+
+/* ---- storico ---- */
+async function loadRemHistory(){
+  const box=$("#remBox"); await remEnsureClients();
+  const [{data:ev},{data:canc}]=await Promise.all([
+    sb.from("reminder_events").select("id,title,kind,amount_cents,event_date,target_client_id").eq("event_type","fatto").order("event_date",{ascending:false}).limit(1000),
+    sb.from("reminders").select("id,title,kind,amount_cents,target_client_id,updated_at").eq("status","annullato").order("updated_at",{ascending:false}).limit(500)
+  ]);
+  const items=[];
+  (ev||[]).forEach(x=>items.push({t:"done", date:x.event_date, title:x.title, kind:x.kind, amount:x.amount_cents, cid:x.target_client_id}));
+  (canc||[]).forEach(x=>items.push({t:"canc", date:String(x.updated_at).slice(0,10), title:x.title, kind:x.kind, amount:x.amount_cents, cid:x.target_client_id, id:x.id}));
+  items.sort((a,b)=> a.date<b.date?1:-1);
+  if(!items.length){ box.innerHTML='<div class="empty">Ancora nessuno storico. Ciò che segni “Fatto” o “Annulla” compare qui.</div>'; return; }
+  box.innerHTML=items.map(x=>{
+    const cname=x.cid&&REM_CLIENT_MAP?REM_CLIENT_MAP[x.cid]:"";
+    const kl=x.kind&&x.kind!=="generico"?'<span class="rem-badge kind">'+remKindLbl(x.kind)+'</span>':"";
+    const mark=x.t==="done"?'✓ <b>'+fmtDate(x.date)+'</b>':'✕ annullato · '+fmtDate(x.date);
+    return '<div class="rem '+(x.t==="canc"?"cancel":"done")+'"><div class="rem-top"><div style="min-width:0">'+
+      '<div class="rem-title">'+esc(x.title||"")+'</div>'+
+      '<div class="rem-meta"><span>'+mark+'</span>'+(cname?'<span>🏷 '+esc(cname)+'</span>':'')+kl+'</div>'+
+      '</div>'+(x.amount!=null?'<div class="rem-amt">'+euro(x.amount)+'</div>':'')+'</div>'+
+      (x.t==="canc"?'<div class="actions"><button class="act reopen" data-rreopen="'+x.id+'">Riapri</button><button class="act del" data-rdel="'+x.id+'">Elimina</button></div>':'')+
+      '</div>';
+  }).join("");
+}
+
+/* ---- report dedicato ---- */
+async function loadRemReport(){
+  const box=$("#remBox"); await remEnsureClients();
+  const from=remPeriodStart(REM_RP), today=isoToday();
+  let q=sb.from("reminder_events").select("kind,amount_cents,event_date,target_client_id").eq("event_type","fatto");
+  if(from) q=q.gte("event_date",from);
+  const [{data:ev},{data:open}]=await Promise.all([
+    q.limit(8000),
+    sb.from("reminders").select("kind,amount_cents,due_date,target_client_id,recurrence").eq("status","aperto").limit(8000)
+  ]);
+  const rows=ev||[];
+  let incasso=0, nPagati=0; const perKind={}, perClient={};
+  rows.forEach(r=>{ if(r.amount_cents!=null){ incasso+=r.amount_cents; nPagati++;
+    perKind[r.kind||"generico"]=(perKind[r.kind||"generico"]||0)+r.amount_cents;
+    if(r.target_client_id) perClient[r.target_client_id]=(perClient[r.target_client_id]||0)+r.amount_cents; } });
+  let inArrivo=0, scaduti=0;
+  (open||[]).forEach(r=>{ if(r.amount_cents==null||!r.due_date) return; if(r.due_date<today) scaduti+=r.amount_cents; else inArrivo+=r.amount_cents; });
+  const nomeP={week:"questa settimana",month:"questo mese",year:"quest'anno",all:"da sempre"}[REM_RP];
+  const kOrd=Object.entries(perKind).sort((a,b)=>b[1]-a[1]);
+  const cOrd=Object.entries(perClient).map(([id,v])=>[REM_CLIENT_MAP&&REM_CLIENT_MAP[id]?REM_CLIENT_MAP[id]:"—",v]).sort((a,b)=>b[1]-a[1]);
+  box.innerHTML=
+    '<div class="card" style="text-align:center; margin-bottom:14px"><p style="margin:0 0 4px">Incassato · '+nomeP+'</p>'+
+      '<div style="font-size:34px; font-weight:800; color:var(--ok)">'+euro(incasso)+'</div>'+
+      '<div style="color:var(--muted); font-size:12px">su '+nPagati+' promemoria segnati come fatti</div></div>'+
+    '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px">'+
+      '<div class="card" style="margin:0"><p style="margin:0 0 4px">In arrivo (con importo)</p><div style="font-size:22px; font-weight:800">'+euro(inArrivo)+'</div><div style="color:var(--muted); font-size:12px">scadenze future</div></div>'+
+      '<div class="card" style="margin:0"><p style="margin:0 0 4px">Scaduti da incassare</p><div style="font-size:22px; font-weight:800; color:var(--stop)">'+euro(scaduti)+'</div><div style="color:var(--muted); font-size:12px">già oltre la data</div></div>'+
+    '</div>'+
+    (kOrd.length?'<div class="card"><h3 style="margin:0 0 10px">Per tipo</h3>'+kOrd.map(([k,v])=>'<div style="display:flex; justify-content:space-between; padding:7px 0; border-top:1px solid var(--line-soft)"><span>'+esc(remKindLbl(k)||"Generico")+'</span><b>'+euro(v)+'</b></div>').join("")+'</div>':"")+
+    (cOrd.length?'<div class="card"><h3 style="margin:0 0 10px">Per cliente</h3>'+cOrd.map(([n,v])=>'<div style="display:flex; justify-content:space-between; padding:7px 0; border-top:1px solid var(--line-soft)"><span>'+esc(n)+'</span><b>'+euro(v)+'</b></div>').join("")+'</div>':"")+
+    (incasso===0&&inArrivo===0&&scaduti===0?'<div class="empty">Nessun importo in questo periodo. Aggiungi importi ai promemoria per vederne qui il calcolo.</div>':"");
+}
+
+/* ---- modale aggiungi/modifica ---- */
+$("#remAddBtn") && $("#remAddBtn").addEventListener("click", ()=>openRemModal(null));
+$("#remClose") && $("#remClose").addEventListener("click", ()=>$("#remModal").classList.add("hide"));
+$("#remModal") && $("#remModal").addEventListener("click", e=>{ if(e.target.id==="remModal") $("#remModal").classList.add("hide"); });
+$("#remKind") && $("#remKind").addEventListener("change", remSyncModalUI);
+$("#remAlsoAnnual") && $("#remAlsoAnnual").addEventListener("change", ()=>$("#remAlsoAnnualFields").classList.toggle("hide", !$("#remAlsoAnnual").checked));
+
+function remFillClientSelect(sel){
+  const el=$("#remClient"); el.innerHTML='<option value="">— nessuno —</option>'+
+    (REM_CLIENTS||[]).map(c=>'<option value="'+c.id+'"'+(sel===c.id?' selected':'')+'>'+esc(c.name)+'</option>').join("");
+}
+function remSyncModalUI(){
+  const k=$("#remKind").value;
+  $("#remDueLabel").textContent = k==="annuale" ? "Data rinnovo" : "Scadenza (facoltativa)";
+  const rc=$("#remRecur"); if(k==="annuale"){ rc.checked=true; rc.disabled=true; } else { rc.disabled=false; }
+  $("#remClientRow").classList.toggle("hide", !(remIsSuper() && k!=="generico"));
+  $("#remAlsoAnnualCard").classList.toggle("hide", !(remIsSuper() && k==="attivazione"));
+  if($("#remAlsoAnnualCard").classList.contains("hide")){ $("#remAlsoAnnual").checked=false; $("#remAlsoAnnualFields").classList.add("hide"); }
+}
+async function openRemModal(r){
+  await remEnsureClients();
+  REM_EDIT_ID = r?r.id:null;
+  $("#remModalTitle").textContent = r?"Modifica promemoria":"Nuovo promemoria";
+  $("#remMsg").className="msg"; $("#remMsg").textContent="";
+  $("#remTitle").value = r?r.title:"";
+  $("#remKind").value = r?r.kind:"generico";
+  $("#remAmount").value = (r&&r.amount_cents!=null)?(r.amount_cents/100):"";
+  $("#remDue").value = (r&&r.due_date)?r.due_date:"";
+  $("#remNotes").value = r?(r.notes||""):"";
+  $("#remRecur").checked = r?(r.recurrence==="annual"):false;
+  remFillClientSelect(r?r.target_client_id:"");
+  $("#remAlsoAnnual").checked=false; $("#remAlsoAnnualFields").classList.add("hide");
+  $("#remDelete").classList.toggle("hide", !r);
+  remSyncModalUI();
+  $("#remModal").classList.remove("hide");
+}
+$("#remDelete") && $("#remDelete").addEventListener("click", async ()=>{
+  if(!REM_EDIT_ID) return; if(!confirm("Eliminare questo promemoria?")) return;
+  await sb.from("reminders").delete().eq("id",REM_EDIT_ID);
+  $("#remModal").classList.add("hide"); toast("Eliminato"); loadReminders(); remDueBadge();
+});
+$("#remSave") && $("#remSave").addEventListener("click", saveRem);
+async function saveRem(){
+  const m=$("#remMsg"); m.className="msg";
+  const title=$("#remTitle").value.trim();
+  if(!title){ m.className="msg err"; m.textContent="Il titolo è obbligatorio."; return; }
+  const k=$("#remKind").value;
+  const tcid = (remIsSuper() && k!=="generico") ? ($("#remClient").value||null) : null;
+  const rec = ($("#remRecur").checked || k==="annuale") ? "annual" : "none";
+  const payload={
+    title, notes:$("#remNotes").value.trim()||null, amount_cents:eurToCents($("#remAmount").value),
+    kind:k, due_date:$("#remDue").value||null, recurrence:rec, target_client_id:tcid
+  };
+  let err;
+  if(REM_EDIT_ID){ ({error:err}=await sb.from("reminders").update(payload).eq("id",REM_EDIT_ID)); }
+  else {
+    payload.client_id=remOwnerClientId();
+    ({error:err}=await sb.from("reminders").insert(payload));
+  }
+  if(err){ m.className="msg err"; m.textContent="Errore: "+err.message; return; }
+  // convenienza: crea anche il canone annuale collegato
+  if(!REM_EDIT_ID && remIsSuper() && k==="attivazione" && $("#remAlsoAnnual").checked){
+    const aAmt=eurToCents($("#remAnnualAmount").value), aDue=$("#remAnnualDue").value||null;
+    if(aAmt!=null || aDue){
+      await sb.from("reminders").insert({
+        title:"Canone annuale — "+title, notes:null, amount_cents:aAmt, kind:"annuale",
+        due_date:aDue, recurrence:"annual", target_client_id:tcid, client_id:remOwnerClientId()
+      });
+    }
+  }
+  $("#remModal").classList.add("hide"); toast("Salvato"); loadReminders(); remDueBadge();
+}
+
+/* ---- badge scadenze ---- */
+async function remDueBadge(){
+  const b=$("#remBadge"); if(!b) return;
+  const { count } = await sb.from("reminders").select("id",{count:"exact",head:true}).eq("status","aperto").lte("due_date",isoToday());
+  if(count && count>0){ b.textContent=count; b.classList.remove("hide"); } else b.classList.add("hide");
+}
+
+/* ---- notifiche push (bottone nell'header Promemoria, ids dedicati) ---- */
+async function remRenderPush(){
+  const st=$("#remPushStatus"), btn=$("#remPushBtn"); if(!st||!btn) return;
+  if(!("serviceWorker" in navigator) || !("PushManager" in window)){ st.textContent="Notifiche non supportate su questo browser."; btn.classList.add("hide"); return; }
+  if(isIOS && !isStandalone){ st.textContent="Su iPhone apri l'app dall'icona in Home per attivarle."; btn.classList.add("hide"); return; }
+  btn.classList.remove("hide");
+  const reg=await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription();
+  if(Notification.permission==="granted" && sub){ st.textContent="✅ Attive su questo dispositivo."; btn.textContent="Disattiva"; btn.dataset.on="1"; }
+  else { st.textContent="Ricevi un avviso quando un promemoria con data scade."; btn.textContent="Attiva su questo dispositivo"; btn.dataset.on=""; }
+}
+$("#remPushBtn") && $("#remPushBtn").addEventListener("click", async ()=>{
+  const btn=$("#remPushBtn"); const reg=await navigator.serviceWorker.ready;
+  if(btn.dataset.on){ const sub=await reg.pushManager.getSubscription(); if(sub){ try{ await sb.from("push_subscriptions").delete().eq("endpoint",sub.endpoint); }catch(e){} await sub.unsubscribe(); } toast("Notifiche disattivate"); remRenderPush(); return; }
+  if(VAPID_PUBLIC_KEY.startsWith("INCOLLA")){ toast("Chiave VAPID non configurata"); return; }
+  const perm=await Notification.requestPermission(); if(perm!=="granted"){ toast("Permesso negato"); remRenderPush(); return; }
+  let sub; try{ sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:urlB64ToUint8Array(VAPID_PUBLIC_KEY) }); }catch(e){ toast("Errore: "+e.message); return; }
+  const json=sub.toJSON(); const { data:{ user } }=await sb.auth.getUser();
+  const { error }=await sb.from("push_subscriptions").upsert({ user_id:user.id, client_id:(CLIENT?CLIENT.id:null), endpoint:json.endpoint, subscription:json },{ onConflict:"endpoint" });
+  if(error){ toast("Errore salvataggio: "+error.message); return; }
+  toast("Notifiche attivate"); remRenderPush();
+});
 
 /* =====================================================================
    AVVIO

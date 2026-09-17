@@ -276,3 +276,24 @@ input,select{font-family:inherit}
 /* larghezza piena agenda anche su browser senza :has() (Safari vecchi) */
 #tab-bookings.ag-open{ max-width:none; padding-left:6px; padding-right:6px }
 .ag-b-dot{display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle}
+
+/* ---- Promemoria ---- */
+.rem{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:13px 14px; margin-bottom:10px; box-shadow:var(--sh)}
+.rem.done{opacity:.62}
+.rem.cancel{opacity:.55}
+.rem-top{display:flex; align-items:flex-start; justify-content:space-between; gap:12px}
+.rem-title{font-weight:700; font-size:15.5px; line-height:1.25}
+.rem-notes{color:var(--muted); font-size:13.5px; margin-top:4px; white-space:pre-wrap; word-break:break-word}
+.rem-meta{display:flex; flex-wrap:wrap; gap:6px 12px; color:var(--muted); font-size:13px; margin-top:8px; align-items:center}
+.rem-meta b{color:var(--ink); font-weight:600}
+.rem-amt{font-weight:800; font-size:16px; white-space:nowrap}
+.rem-badge{font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; white-space:nowrap}
+.rem-badge.due{background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn-line)}
+.rem-badge.over{background:var(--stop-bg); color:var(--stop); border:1px solid var(--stop-line)}
+.rem-badge.annual{background:var(--ok-bg); color:var(--ok); border:1px solid var(--ok-line)}
+.rem-badge.kind{background:var(--paper); color:var(--muted); border:1px solid var(--line)}
+.rem-move{display:flex; flex-direction:column; gap:3px; flex:0 0 auto}
+.rem-move button{border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:7px; width:30px; height:22px; font-size:11px; line-height:1; padding:0}
+.rem-move button[disabled]{opacity:.35}
+.rem .actions{flex-wrap:wrap}
+.rem .actions .act{flex:0 1 auto; padding:9px 14px}
