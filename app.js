@@ -1772,7 +1772,7 @@ $("#staffList") && $("#staffList").addEventListener("click", async e=>{
    Tabelle: reminders, reminder_events · RPC: reminder_mark_done
    ===================================================================== */
 let REM=[], REM_VIEW="todo", REM_SORT="due", REM_RP="month";
-let REM_CLIENTS=null, REM_CLIENT_MAP=null, REM_EDIT_ID=null;
+let REM_CLIENTS=null, REM_CLIENT_MAP=null, REM_EDIT_ID=null, REM_CLIENT_DETAIL=null;
 
 function remIsSuper(){ return ME && ME.role==="super_admin"; }
 function remOwnerClientId(){ return remIsSuper() ? null : (CLIENT?CLIENT.id:null); }
@@ -1801,8 +1801,9 @@ function eurToCents(v){
 document.querySelectorAll('#tab-reminders .chip[data-rv]').forEach(c=>c.addEventListener("click",()=>{
   document.querySelectorAll('#tab-reminders .chip[data-rv]').forEach(x=>x.classList.remove("on"));
   c.classList.add("on"); REM_VIEW=c.dataset.rv;
-  $("#remTools").classList.toggle("hide", REM_VIEW==="report");
+  $("#remTools").classList.toggle("hide", !(REM_VIEW==="todo"||REM_VIEW==="overdue"));
   $("#remReportPeriod").classList.toggle("hide", REM_VIEW!=="report");
+  REM_CLIENT_DETAIL=null;
   loadReminders();
 }));
 $("#remSort") && $("#remSort").addEventListener("change", ()=>{ REM_SORT=$("#remSort").value; renderReminders(); });
@@ -1815,10 +1816,12 @@ document.querySelectorAll('#remReportPeriod .chip[data-rvp]').forEach(c=>c.addEv
 /* ---- load ---- */
 async function loadReminders(){
   remRenderPush();
+  const cc=$("#remClientiChip"); if(cc) cc.classList.toggle("hide", !remIsSuper());
   const box=$("#remBox"); box.innerHTML='<div class="loading">Carico…</div>';
   await remEnsureClients();
   if(REM_VIEW==="history") return loadRemHistory();
   if(REM_VIEW==="report")  return loadRemReport();
+  if(REM_VIEW==="clienti") return loadRemClientsView();
   const { data, error } = await sb.from("reminders")
     .select("id,title,notes,amount_cents,kind,due_date,recurrence,status,sort_order,target_client_id,created_at")
     .eq("status","aperto").limit(3000);
@@ -1872,6 +1875,10 @@ function remCardHtml(r,today,i,n){
 
 /* ---- azioni ---- */
 $("#remBox") && $("#remBox").addEventListener("click", async e=>{
+  const rc=e.target.closest("[data-rclient]");
+  if(rc){ REM_CLIENT_DETAIL=rc.dataset.rclient; loadRemClientDetail(REM_CLIENT_DETAIL); return; }
+  const rb=e.target.closest("[data-rback]");
+  if(rb){ REM_CLIENT_DETAIL=null; loadRemClientsView(); return; }
   const done=e.target.closest("[data-rdone]");
   if(done){ const {error}=await sb.rpc("reminder_mark_done",{p_id:done.dataset.rdone}); if(error){toast("Errore: "+error.message);return;} toast("Segnato come fatto"); loadReminders(); remDueBadge(); return; }
   const sn=e.target.closest("[data-rsnooze]");
@@ -1957,6 +1964,46 @@ async function loadRemReport(){
     (incasso===0&&inArrivo===0&&scaduti===0?'<div class="empty">Nessun importo in questo periodo. Aggiungi importi ai promemoria per vederne qui il calcolo.</div>':"");
 }
 
+/* ---- vista Clienti: quanto ha generato ognuno + storico ---- */
+async function loadRemClientsView(){
+  const box=$("#remBox"); await remEnsureClients();
+  if(REM_CLIENT_DETAIL) return loadRemClientDetail(REM_CLIENT_DETAIL);
+  const [{data:ev},{data:open}]=await Promise.all([
+    sb.from("reminder_events").select("target_client_id,amount_cents").eq("event_type","fatto").limit(10000),
+    sb.from("reminders").select("target_client_id,amount_cents,due_date").eq("status","aperto").not("target_client_id","is",null).limit(10000)
+  ]);
+  const agg={};   // cid -> {tot, n, open}
+  (ev||[]).forEach(r=>{ if(!r.target_client_id) return; const a=agg[r.target_client_id]||(agg[r.target_client_id]={tot:0,n:0,open:0}); if(r.amount_cents!=null){a.tot+=r.amount_cents;} a.n++; });
+  (open||[]).forEach(r=>{ const a=agg[r.target_client_id]||(agg[r.target_client_id]={tot:0,n:0,open:0}); if(r.amount_cents!=null) a.open+=r.amount_cents; });
+  const rows=Object.entries(agg).map(([cid,a])=>({cid, name:(REM_CLIENT_MAP&&REM_CLIENT_MAP[cid])?REM_CLIENT_MAP[cid]:"—", ...a})).sort((x,y)=>y.tot-x.tot);
+  if(!rows.length){ box.innerHTML='<div class="empty">Ancora nessun cliente collegato. Aggiungi un promemoria e scrivi il nome del cliente per iniziare il suo storico.</div>'; return; }
+  const totale=rows.reduce((s,r)=>s+r.tot,0);
+  box.innerHTML=
+    '<div class="card" style="text-align:center; margin-bottom:14px"><p style="margin:0 0 4px">Totale generato · tutti i clienti</p><div style="font-size:30px; font-weight:800; color:var(--ok)">'+euro(totale)+'</div></div>'+
+    rows.map(r=>'<div class="rem" data-rclient="'+r.cid+'" style="cursor:pointer"><div class="rem-top"><div style="min-width:0">'+
+      '<div class="rem-title">'+esc(r.name)+'</div>'+
+      '<div class="rem-meta"><span>'+r.n+' interventi</span>'+(r.open?'<span>· in arrivo <b>'+euro(r.open)+'</b></span>':'')+'</div>'+
+      '</div><div class="rem-amt">'+euro(r.tot)+'</div></div></div>').join("");
+}
+async function loadRemClientDetail(cid){
+  const box=$("#remBox"); await remEnsureClients();
+  const name=(REM_CLIENT_MAP&&REM_CLIENT_MAP[cid])?REM_CLIENT_MAP[cid]:"—";
+  const [{data:ev},{data:open}]=await Promise.all([
+    sb.from("reminder_events").select("title,kind,amount_cents,event_date").eq("target_client_id",cid).eq("event_type","fatto").order("event_date",{ascending:false}).limit(2000),
+    sb.from("reminders").select("id,title,kind,amount_cents,due_date").eq("target_client_id",cid).eq("status","aperto").order("due_date").limit(2000)
+  ]);
+  const tot=(ev||[]).reduce((s,r)=>s+(r.amount_cents||0),0);
+  const today=isoToday();
+  const openHtml=(open||[]).map(r=>{ const over=r.due_date&&r.due_date<today;
+    return '<div style="display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid var(--line-soft)"><span>'+esc(r.title)+(r.due_date?' <span style="color:'+(over?'var(--stop)':'var(--muted)')+'">· '+fmtDate(r.due_date)+'</span>':'')+'</span><b>'+(r.amount_cents!=null?euro(r.amount_cents):'—')+'</b></div>'; }).join("");
+  const evHtml=(ev||[]).map(r=>'<div style="display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid var(--line-soft)"><span>'+esc(r.title||"")+' <span style="color:var(--muted)">· '+fmtDate(r.event_date)+'</span></span><b>'+(r.amount_cents!=null?euro(r.amount_cents):'—')+'</b></div>').join("");
+  box.innerHTML=
+    '<button class="chip" data-rback="1" style="margin-bottom:12px">‹ Tutti i clienti</button>'+
+    '<div class="card" style="text-align:center"><p style="margin:0 0 4px">'+esc(name)+' · generato in totale</p><div style="font-size:30px; font-weight:800; color:var(--ok)">'+euro(tot)+'</div><div style="color:var(--muted); font-size:12px">'+(ev||[]).length+' interventi</div></div>'+
+    (openHtml?'<div class="card"><h3 style="margin:0 0 6px">In arrivo / aperti</h3>'+openHtml+'</div>':'')+
+    (evHtml?'<div class="card"><h3 style="margin:0 0 6px">Storico incassato</h3>'+evHtml+'</div>':'<div class="empty">Nessun intervento registrato per questo cliente.</div>');
+}
+
 /* ---- modale aggiungi/modifica ---- */
 $("#remAddBtn") && $("#remAddBtn").addEventListener("click", ()=>openRemModal(null));
 $("#remClose") && $("#remClose").addEventListener("click", ()=>$("#remModal").classList.add("hide"));
@@ -1964,10 +2011,27 @@ $("#remModal") && $("#remModal").addEventListener("click", e=>{ if(e.target.id==
 $("#remKind") && $("#remKind").addEventListener("change", remSyncModalUI);
 $("#remAlsoAnnual") && $("#remAlsoAnnual").addEventListener("change", ()=>$("#remAlsoAnnualFields").classList.toggle("hide", !$("#remAlsoAnnual").checked));
 
-function remFillClientSelect(sel){
-  const el=$("#remClient"); el.innerHTML='<option value="">— nessuno —</option>'+
-    (REM_CLIENTS||[]).map(c=>'<option value="'+c.id+'"'+(sel===c.id?' selected':'')+'>'+esc(c.name)+'</option>').join("");
+function remSetClient(id){
+  $("#remClient").value = id||"";
+  $("#remClientInput").value = (id && REM_CLIENT_MAP && REM_CLIENT_MAP[id]) ? REM_CLIENT_MAP[id] : "";
+  $("#remClientSuggest").classList.add("hide");
 }
+$("#remClientInput") && $("#remClientInput").addEventListener("input", ()=>{
+  const term=$("#remClientInput").value.trim().toLowerCase();
+  $("#remClient").value="";                 // finché non selezioni, nessun id collegato
+  const box=$("#remClientSuggest");
+  if(!term){ box.classList.add("hide"); return; }
+  const rows=(REM_CLIENTS||[]).filter(c=>(c.name||"").toLowerCase().includes(term)).slice(0,10);
+  if(!rows.length){ box.innerHTML='<div class="s-item" style="color:var(--muted)">Nessun cliente</div>'; box.classList.remove("hide"); return; }
+  box.innerHTML=rows.map(c=>'<div class="s-item" data-cid="'+c.id+'" data-name="'+esc(c.name)+'">'+esc(c.name)+'</div>').join("");
+  box.classList.remove("hide");
+});
+$("#remClientSuggest") && $("#remClientSuggest").addEventListener("click", e=>{
+  const it=e.target.closest(".s-item[data-cid]"); if(!it) return;
+  $("#remClient").value=it.dataset.cid;
+  $("#remClientInput").value=it.dataset.name;
+  $("#remClientSuggest").classList.add("hide");
+});
 function remSyncModalUI(){
   const k=$("#remKind").value;
   $("#remDueLabel").textContent = k==="annuale" ? "Data rinnovo" : "Scadenza (facoltativa)";
@@ -1987,7 +2051,7 @@ async function openRemModal(r){
   $("#remDue").value = (r&&r.due_date)?r.due_date:"";
   $("#remNotes").value = r?(r.notes||""):"";
   $("#remRecur").checked = r?(r.recurrence==="annual"):false;
-  remFillClientSelect(r?r.target_client_id:"");
+  remSetClient(r?r.target_client_id:"");
   $("#remAlsoAnnual").checked=false; $("#remAlsoAnnualFields").classList.add("hide");
   $("#remDelete").classList.toggle("hide", !r);
   remSyncModalUI();
@@ -2004,7 +2068,13 @@ async function saveRem(){
   const title=$("#remTitle").value.trim();
   if(!title){ m.className="msg err"; m.textContent="Il titolo è obbligatorio."; return; }
   const k=$("#remKind").value;
-  const tcid = (remIsSuper() && k!=="generico") ? ($("#remClient").value||null) : null;
+  let tcid = null;
+  if(remIsSuper() && k!=="generico"){
+    tcid = $("#remClient").value || null;
+    if(!tcid){ const typed=$("#remClientInput").value.trim().toLowerCase();
+      const hit=(REM_CLIENTS||[]).find(c=>(c.name||"").toLowerCase()===typed);
+      if(hit) tcid=hit.id; }
+  }
   const rec = ($("#remRecur").checked || k==="annuale") ? "annual" : "none";
   const payload={
     title, notes:$("#remNotes").value.trim()||null, amount_cents:eurToCents($("#remAmount").value),
