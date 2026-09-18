@@ -166,6 +166,7 @@
       <button class="chip on" data-rv="todo">Da fare</button>
       <button class="chip" data-rv="overdue">Scaduti</button>
       <button class="chip" data-rv="history">Storico</button>
+      <button class="chip" data-rv="clienti" id="remClientiChip">Clienti</button>
       <button class="chip" data-rv="report">Report</button>
       <button class="chip" id="remAddBtn" style="background:var(--ink);color:#fff;border-color:var(--ink); margin-left:auto">+ Aggiungi</button>
     </div>
@@ -357,8 +358,10 @@
         </div>
         <div class="mfield"><label>Importo €</label><input id="remAmount" class="input" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Facoltativo" /></div>
       </div>
-      <div class="mfield hide" id="remClientRow"><label>Cliente collegato</label>
-        <select id="remClient" class="sel" style="width:100%"><option value="">— nessuno —</option></select>
+      <div class="mfield hide" id="remClientRow" style="position:relative"><label>Cliente collegato</label>
+        <input id="remClientInput" class="input" placeholder="Scrivi il nome del cliente…" autocomplete="off" />
+        <input type="hidden" id="remClient" />
+        <div id="remClientSuggest" class="suggest hide"></div>
       </div>
       <div class="mrow">
         <div class="mfield"><label id="remDueLabel">Scadenza (facoltativa)</label><input id="remDue" class="input" type="date" /></div>
