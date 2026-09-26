@@ -2064,6 +2064,62 @@ $("#remClientDelete") && $("#remClientDelete").addEventListener("click", async (
   REM_CLIENT_DETAIL=null; if(REM_VIEW==="clienti") loadRemClientsView();
 });
 
+/* ---- modale MODIFICA voce storico (reminder_events) ---- */
+function openRemEventModal(row){
+  REM_EV_EDIT=row.id;
+  $("#remEvMsg").className="msg"; $("#remEvMsg").textContent="";
+  $("#remEvTitle").value=row.title||"";
+  $("#remEvKind").value=row.kind||"generico";
+  $("#remEvAmount").value=(row.amount_cents!=null)?(row.amount_cents/100):"";
+  $("#remEvDate").value=row.event_date||"";
+  $("#remEvClient").value=row.target_client_id||"";
+  $("#remEvClientInput").value=(row.target_client_id&&REM_CLIENT_MAP&&REM_CLIENT_MAP[row.target_client_id])?REM_CLIENT_MAP[row.target_client_id]:"";
+  $("#remEvClientSuggest").classList.add("hide");
+  $("#remEventModal").classList.remove("hide");
+}
+$("#remEvClose") && $("#remEvClose").addEventListener("click", ()=>$("#remEventModal").classList.add("hide"));
+$("#remEventModal") && $("#remEventModal").addEventListener("click", e=>{ if(e.target.id==="remEventModal") $("#remEventModal").classList.add("hide"); });
+$("#remEvClientInput") && $("#remEvClientInput").addEventListener("input", ()=>{
+  const raw=$("#remEvClientInput").value.trim(), term=raw.toLowerCase();
+  $("#remEvClient").value="";
+  const box=$("#remEvClientSuggest");
+  if(!term){ box.classList.add("hide"); return; }
+  const rows=(REM_CLIENTS||[]).filter(c=>(c.name||"").toLowerCase().includes(term)).slice(0,10);
+  const exact=(REM_CLIENTS||[]).some(c=>(c.name||"").toLowerCase()===term);
+  let html=rows.map(c=>'<div class="s-item" data-cid="'+c.id+'" data-name="'+esc(c.name)+'">'+esc(c.name)+'</div>').join("");
+  if(!exact) html+='<div class="s-item" data-newclient="'+esc(raw)+'" style="color:var(--ok); font-weight:600">+ Crea «'+esc(raw)+'»</div>';
+  box.innerHTML=html; box.classList.remove("hide");
+});
+$("#remEvClientSuggest") && $("#remEvClientSuggest").addEventListener("click", async e=>{
+  const nw=e.target.closest("[data-newclient]");
+  if(nw){ const id=await remCreateClient(nw.dataset.newclient); if(id){ $("#remEvClient").value=id; $("#remEvClientInput").value=(REM_CLIENT_MAP&&REM_CLIENT_MAP[id])?REM_CLIENT_MAP[id]:nw.dataset.newclient; } $("#remEvClientSuggest").classList.add("hide"); return; }
+  const it=e.target.closest(".s-item[data-cid]"); if(!it) return;
+  $("#remEvClient").value=it.dataset.cid; $("#remEvClientInput").value=it.dataset.name;
+  $("#remEvClientSuggest").classList.add("hide");
+});
+$("#remEvSave") && $("#remEvSave").addEventListener("click", async ()=>{
+  if(!REM_EV_EDIT) return;
+  const m=$("#remEvMsg"); m.className="msg";
+  const title=$("#remEvTitle").value.trim();
+  if(!title){ m.className="msg err"; m.textContent="Il titolo è obbligatorio."; return; }
+  let tcid=$("#remEvClient").value||null;
+  if(!tcid){ const raw=$("#remEvClientInput").value.trim();
+    if(raw){ const hit=(REM_CLIENTS||[]).find(c=>(c.name||"").toLowerCase()===raw.toLowerCase()); tcid=hit?hit.id:await remCreateClient(raw); } }
+  const { error }=await sb.from("reminder_events").update({
+    title, kind:$("#remEvKind").value, amount_cents:eurToCents($("#remEvAmount").value),
+    event_date:$("#remEvDate").value||null, target_client_id:tcid
+  }).eq("id",REM_EV_EDIT);
+  if(error){ m.className="msg err"; m.textContent="Errore: "+error.message; return; }
+  $("#remEventModal").classList.add("hide"); toast("Storico aggiornato"); loadRemHistory();
+});
+$("#remEvDelete") && $("#remEvDelete").addEventListener("click", async ()=>{
+  if(!REM_EV_EDIT) return;
+  if(!confirm("Eliminare questa voce dallo storico? L'importo verrà tolto dai totali e dal report.")) return;
+  const { error }=await sb.from("reminder_events").delete().eq("id",REM_EV_EDIT);
+  if(error){ toast("Errore: "+error.message); return; }
+  $("#remEventModal").classList.add("hide"); toast("Voce eliminata"); loadRemHistory();
+});
+
 /* ---- modale aggiungi/modifica ---- */
 $("#remAddBtn") && $("#remAddBtn").addEventListener("click", ()=>openRemModal(null));
 $("#remClose") && $("#remClose").addEventListener("click", ()=>$("#remModal").classList.add("hide"));
