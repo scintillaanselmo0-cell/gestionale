@@ -404,6 +404,36 @@
   </div>
 </div>
 
+<div id="remEventModal" class="modal-back hide">
+  <div class="modal">
+    <div class="modal-head"><h3>Modifica voce storico</h3><button class="modal-x" id="remEvClose">✕</button></div>
+    <div class="modal-body">
+      <div id="remEvMsg" class="msg"></div>
+      <div class="mfield"><label>Titolo</label><input id="remEvTitle" class="input" /></div>
+      <div class="mrow">
+        <div class="mfield"><label>Tipo</label>
+          <select id="remEvKind" class="sel" style="width:100%">
+            <option value="generico">Generico</option>
+            <option value="attivazione">Attivazione servizio</option>
+            <option value="annuale">Canone annuale</option>
+          </select>
+        </div>
+        <div class="mfield"><label>Importo €</label><input id="remEvAmount" class="input" type="number" inputmode="decimal" min="0" step="0.01" /></div>
+      </div>
+      <div class="mfield" style="position:relative"><label>Cliente collegato</label>
+        <input id="remEvClientInput" class="input" placeholder="Scrivi il nome del cliente…" autocomplete="off" />
+        <input type="hidden" id="remEvClient" />
+        <div id="remEvClientSuggest" class="suggest hide"></div>
+      </div>
+      <div class="mfield"><label>Data</label><input id="remEvDate" class="input" type="date" /></div>
+      <div style="display:flex; gap:10px; margin-top:6px">
+        <button class="btn" id="remEvSave">Salva modifiche</button>
+        <button class="chip" id="remEvDelete" style="border-color:var(--stop-line); color:var(--stop); padding:0 16px">Elimina</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="staffModal" class="modal-back hide">
   <div class="modal">
     <div class="modal-head"><h3>Personale</h3><button class="modal-x" id="staffClose">✕</button></div>
