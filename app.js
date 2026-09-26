@@ -1772,7 +1772,7 @@ $("#staffList") && $("#staffList").addEventListener("click", async e=>{
    Tabelle: reminders, reminder_events · RPC: reminder_mark_done
    ===================================================================== */
 let REM=[], REM_VIEW="todo", REM_SORT="due", REM_RP="month";
-let REM_CLIENTS=null, REM_CLIENT_MAP=null, REM_EDIT_ID=null, REM_CLIENT_DETAIL=null;
+let REM_CLIENTS=null, REM_CLIENT_MAP=null, REM_EDIT_ID=null, REM_CLIENT_DETAIL=null, REM_HIST_EV=[], REM_EV_EDIT=null;
 
 function remIsSuper(){ return ME && ME.role==="super_admin"; }
 function remOwnerClientId(){ return remIsSuper() ? null : (CLIENT?CLIENT.id:null); }
@@ -1910,6 +1910,8 @@ $("#remBox") && $("#remBox").addEventListener("click", async e=>{
   if(rp){ await sb.from("reminders").update({status:"aperto"}).eq("id",rp.dataset.rreopen); toast("Riaperto"); loadReminders(); remDueBadge(); return; }
   const ved=e.target.closest("[data-reventdel]");
   if(ved){ if(!confirm("Eliminare questa voce dallo storico? L'importo verrà tolto dai totali e dal report.")) return; await sb.from("reminder_events").delete().eq("id",ved.dataset.reventdel); toast("Voce eliminata"); loadRemHistory(); return; }
+  const vee=e.target.closest("[data-reventedit]");
+  if(vee){ const row=(REM_HIST_EV||[]).find(x=>x.id===vee.dataset.reventedit); if(row) openRemEventModal(row); return; }
 });
 
 async function remMove(id,dir){
@@ -1929,6 +1931,7 @@ async function loadRemHistory(){
     sb.from("reminder_events").select("id,title,kind,amount_cents,event_date,target_client_id").eq("event_type","fatto").order("event_date",{ascending:false}).limit(1000),
     sb.from("reminders").select("id,title,kind,amount_cents,target_client_id,updated_at").eq("status","annullato").order("updated_at",{ascending:false}).limit(500)
   ]);
+  REM_HIST_EV = ev||[];
   const items=[];
   (ev||[]).forEach(x=>items.push({t:"done", date:x.event_date, title:x.title, kind:x.kind, amount:x.amount_cents, cid:x.target_client_id, id:x.id}));
   (canc||[]).forEach(x=>items.push({t:"canc", date:String(x.updated_at).slice(0,10), title:x.title, kind:x.kind, amount:x.amount_cents, cid:x.target_client_id, id:x.id}));
@@ -1944,7 +1947,7 @@ async function loadRemHistory(){
       '</div>'+(x.amount!=null?'<div class="rem-amt">'+euro(x.amount)+'</div>':'')+'</div>'+
       (x.t==="canc"
         ? '<div class="actions"><button class="act reopen" data-rreopen="'+x.id+'">Riapri</button><button class="act del" data-rdel="'+x.id+'">Elimina</button></div>'
-        : '<div class="actions"><button class="act del" data-reventdel="'+x.id+'">Elimina dallo storico</button></div>')+
+        : '<div class="actions"><button class="act" data-reventedit="'+x.id+'">Modifica</button><button class="act del" data-reventdel="'+x.id+'">Elimina</button></div>')+
       '</div>';
   }).join("");
 }
