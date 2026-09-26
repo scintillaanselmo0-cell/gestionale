@@ -389,6 +389,21 @@
   </div>
 </div>
 
+<div id="remClientModal" class="modal-back hide">
+  <div class="modal">
+    <div class="modal-head"><h3 id="remClientModalTitle">Nuovo cliente</h3><button class="modal-x" id="remClientClose">✕</button></div>
+    <div class="modal-body">
+      <div id="remClientMsg" class="msg"></div>
+      <div class="mfield"><label>Nome cliente</label><input id="remClientName" class="input" placeholder="Es. Pincopallino" autocomplete="off" /></div>
+      <div class="mfield"><label>Note <span style="color:var(--muted);font-weight:400">(facoltative)</span></label><input id="remClientNotes" class="input" placeholder="Contatti, riferimenti…" /></div>
+      <div style="display:flex; gap:10px; margin-top:6px">
+        <button class="btn" id="remClientSave">Salva cliente</button>
+        <button class="chip hide" id="remClientDelete" style="border-color:var(--stop-line); color:var(--stop); padding:0 16px">Elimina</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="staffModal" class="modal-back hide">
   <div class="modal">
     <div class="modal-head"><h3>Personale</h3><button class="modal-x" id="staffClose">✕</button></div>
