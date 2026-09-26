@@ -1785,12 +1785,22 @@ function remPeriodStart(p){
   else return null;
   return ymd(d);
 }
+async function remReloadClients(){ REM_CLIENT_MAP=null; await remEnsureClients(); }
 async function remEnsureClients(){
   if(REM_CLIENT_MAP) return;
   REM_CLIENT_MAP={};
-  const { data } = await sb.from("clients").select("id,name").order("name");
+  const { data } = await sb.from("reminder_clients").select("id,name").order("name");
   REM_CLIENTS=data||[];
   REM_CLIENTS.forEach(c=>{ REM_CLIENT_MAP[c.id]=c.name; });
+}
+async function remCreateClient(name){
+  const nm=(name||"").trim(); if(!nm) return null;
+  const existing=(REM_CLIENTS||[]).find(c=>(c.name||"").toLowerCase()===nm.toLowerCase());
+  if(existing) return existing.id;
+  const { data, error }=await sb.from("reminder_clients").insert({ name:nm, owner_user_id:MY_UID }).select("id,name").single();
+  if(error){ toast("Errore: "+error.message); return null; }
+  await remReloadClients();
+  return data.id;
 }
 function eurToCents(v){
   if(v==null) return null; const s=String(v).trim().replace(",",".");
@@ -1875,6 +1885,10 @@ function remCardHtml(r,today,i,n){
 
 /* ---- azioni ---- */
 $("#remBox") && $("#remBox").addEventListener("click", async e=>{
+  const rac=e.target.closest("#remAddClientBtn");
+  if(rac){ openRemClientModal(null); return; }
+  const rec=e.target.closest("[data-reditclient]");
+  if(rec){ const c=(REM_CLIENTS||[]).find(x=>x.id===rec.dataset.reditclient); openRemClientModal(c||{id:rec.dataset.reditclient,name:""}); return; }
   const rc=e.target.closest("[data-rclient]");
   if(rc){ REM_CLIENT_DETAIL=rc.dataset.rclient; loadRemClientDetail(REM_CLIENT_DETAIL); return; }
   const rb=e.target.closest("[data-rback]");
@@ -1973,17 +1987,19 @@ async function loadRemClientsView(){
     sb.from("reminders").select("target_client_id,amount_cents,due_date").eq("status","aperto").not("target_client_id","is",null).limit(10000)
   ]);
   const agg={};   // cid -> {tot, n, open}
+  (REM_CLIENTS||[]).forEach(c=>{ agg[c.id]={tot:0,n:0,open:0}; });   // parte da tutta l'anagrafica
   (ev||[]).forEach(r=>{ if(!r.target_client_id) return; const a=agg[r.target_client_id]||(agg[r.target_client_id]={tot:0,n:0,open:0}); if(r.amount_cents!=null){a.tot+=r.amount_cents;} a.n++; });
   (open||[]).forEach(r=>{ const a=agg[r.target_client_id]||(agg[r.target_client_id]={tot:0,n:0,open:0}); if(r.amount_cents!=null) a.open+=r.amount_cents; });
-  const rows=Object.entries(agg).map(([cid,a])=>({cid, name:(REM_CLIENT_MAP&&REM_CLIENT_MAP[cid])?REM_CLIENT_MAP[cid]:"—", ...a})).sort((x,y)=>y.tot-x.tot);
-  if(!rows.length){ box.innerHTML='<div class="empty">Ancora nessun cliente collegato. Aggiungi un promemoria e scrivi il nome del cliente per iniziare il suo storico.</div>'; return; }
+  const rows=Object.entries(agg).map(([cid,a])=>({cid, name:(REM_CLIENT_MAP&&REM_CLIENT_MAP[cid])?REM_CLIENT_MAP[cid]:"—", ...a})).sort((x,y)=>y.tot-x.tot || x.name.localeCompare(y.name));
   const totale=rows.reduce((s,r)=>s+r.tot,0);
-  box.innerHTML=
+  const addBtn='<div class="filters" style="margin-bottom:12px"><button class="chip" id="remAddClientBtn" style="background:var(--ink);color:#fff;border-color:var(--ink); margin-left:auto">+ Aggiungi cliente</button></div>';
+  if(!rows.length){ box.innerHTML=addBtn+'<div class="empty">Ancora nessun cliente. Tocca “+ Aggiungi cliente” per crearne uno, oppure scrivi il nome mentre aggiungi un promemoria.</div>'; return; }
+  box.innerHTML= addBtn+
     '<div class="card" style="text-align:center; margin-bottom:14px"><p style="margin:0 0 4px">Totale generato · tutti i clienti</p><div style="font-size:30px; font-weight:800; color:var(--ok)">'+euro(totale)+'</div></div>'+
     rows.map(r=>'<div class="rem" data-rclient="'+r.cid+'" style="cursor:pointer"><div class="rem-top"><div style="min-width:0">'+
       '<div class="rem-title">'+esc(r.name)+'</div>'+
       '<div class="rem-meta"><span>'+r.n+' interventi</span>'+(r.open?'<span>· in arrivo <b>'+euro(r.open)+'</b></span>':'')+'</div>'+
-      '</div><div class="rem-amt">'+euro(r.tot)+'</div></div></div>').join("");
+      '</div><div class="rem-amt">'+(r.tot?euro(r.tot):'<span style="color:var(--muted); font-size:13px">—</span>')+'</div></div></div>').join("");
 }
 async function loadRemClientDetail(cid){
   const box=$("#remBox"); await remEnsureClients();
@@ -1998,11 +2014,48 @@ async function loadRemClientDetail(cid){
     return '<div style="display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid var(--line-soft)"><span>'+esc(r.title)+(r.due_date?' <span style="color:'+(over?'var(--stop)':'var(--muted)')+'">· '+fmtDate(r.due_date)+'</span>':'')+'</span><b>'+(r.amount_cents!=null?euro(r.amount_cents):'—')+'</b></div>'; }).join("");
   const evHtml=(ev||[]).map(r=>'<div style="display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid var(--line-soft)"><span>'+esc(r.title||"")+' <span style="color:var(--muted)">· '+fmtDate(r.event_date)+'</span></span><b>'+(r.amount_cents!=null?euro(r.amount_cents):'—')+'</b></div>').join("");
   box.innerHTML=
-    '<button class="chip" data-rback="1" style="margin-bottom:12px">‹ Tutti i clienti</button>'+
+    '<div style="display:flex; justify-content:space-between; margin-bottom:12px"><button class="chip" data-rback="1">‹ Tutti i clienti</button><button class="chip" data-reditclient="'+cid+'">Modifica cliente</button></div>'+
     '<div class="card" style="text-align:center"><p style="margin:0 0 4px">'+esc(name)+' · generato in totale</p><div style="font-size:30px; font-weight:800; color:var(--ok)">'+euro(tot)+'</div><div style="color:var(--muted); font-size:12px">'+(ev||[]).length+' interventi</div></div>'+
     (openHtml?'<div class="card"><h3 style="margin:0 0 6px">In arrivo / aperti</h3>'+openHtml+'</div>':'')+
     (evHtml?'<div class="card"><h3 style="margin:0 0 6px">Storico incassato</h3>'+evHtml+'</div>':'<div class="empty">Nessun intervento registrato per questo cliente.</div>');
 }
+
+/* ---- modale ANAGRAFICA cliente (aggiungi/modifica/elimina) ---- */
+let REM_CLIENT_EDIT=null;
+function openRemClientModal(c){
+  REM_CLIENT_EDIT = c && c.id ? c.id : null;
+  $("#remClientModalTitle").textContent = REM_CLIENT_EDIT ? "Modifica cliente" : "Nuovo cliente";
+  $("#remClientMsg").className="msg"; $("#remClientMsg").textContent="";
+  $("#remClientName").value = c ? (c.name||"") : "";
+  $("#remClientNotes").value = "";
+  $("#remClientDelete").classList.toggle("hide", !REM_CLIENT_EDIT);
+  $("#remClientModal").classList.remove("hide");
+  setTimeout(()=>$("#remClientName").focus(),50);
+}
+$("#remClientClose") && $("#remClientClose").addEventListener("click", ()=>$("#remClientModal").classList.add("hide"));
+$("#remClientModal") && $("#remClientModal").addEventListener("click", e=>{ if(e.target.id==="remClientModal") $("#remClientModal").classList.add("hide"); });
+$("#remClientSave") && $("#remClientSave").addEventListener("click", async ()=>{
+  const m=$("#remClientMsg"); m.className="msg";
+  const name=$("#remClientName").value.trim();
+  if(!name){ m.className="msg err"; m.textContent="Il nome è obbligatorio."; return; }
+  const notes=$("#remClientNotes").value.trim()||null;
+  let err;
+  if(REM_CLIENT_EDIT){ ({error:err}=await sb.from("reminder_clients").update({name,notes}).eq("id",REM_CLIENT_EDIT)); }
+  else { ({error:err}=await sb.from("reminder_clients").insert({name,notes,owner_user_id:MY_UID})); }
+  if(err){ m.className="msg err"; m.textContent="Errore: "+err.message; return; }
+  await remReloadClients();
+  $("#remClientModal").classList.add("hide"); toast("Cliente salvato");
+  if(REM_VIEW==="clienti"){ REM_CLIENT_DETAIL=null; loadRemClientsView(); }
+});
+$("#remClientDelete") && $("#remClientDelete").addEventListener("click", async ()=>{
+  if(!REM_CLIENT_EDIT) return;
+  if(!confirm("Eliminare questo cliente dall'anagrafica? I promemoria collegati restano, ma perdono il collegamento al nome.")) return;
+  const { error }=await sb.from("reminder_clients").delete().eq("id",REM_CLIENT_EDIT);
+  if(error){ toast("Errore: "+error.message); return; }
+  await remReloadClients();
+  $("#remClientModal").classList.add("hide"); toast("Cliente eliminato");
+  REM_CLIENT_DETAIL=null; if(REM_VIEW==="clienti") loadRemClientsView();
+});
 
 /* ---- modale aggiungi/modifica ---- */
 $("#remAddBtn") && $("#remAddBtn").addEventListener("click", ()=>openRemModal(null));
@@ -2022,11 +2075,14 @@ $("#remClientInput") && $("#remClientInput").addEventListener("input", ()=>{
   const box=$("#remClientSuggest");
   if(!term){ box.classList.add("hide"); return; }
   const rows=(REM_CLIENTS||[]).filter(c=>(c.name||"").toLowerCase().includes(term)).slice(0,10);
-  if(!rows.length){ box.innerHTML='<div class="s-item" style="color:var(--muted)">Nessun cliente</div>'; box.classList.remove("hide"); return; }
-  box.innerHTML=rows.map(c=>'<div class="s-item" data-cid="'+c.id+'" data-name="'+esc(c.name)+'">'+esc(c.name)+'</div>').join("");
-  box.classList.remove("hide");
+  const exact=(REM_CLIENTS||[]).some(c=>(c.name||"").toLowerCase()===term);
+  let html=rows.map(c=>'<div class="s-item" data-cid="'+c.id+'" data-name="'+esc(c.name)+'">'+esc(c.name)+'</div>').join("");
+  if(!exact) html+='<div class="s-item" data-newclient="'+esc($("#remClientInput").value.trim())+'" style="color:var(--ok); font-weight:600">+ Crea «'+esc($("#remClientInput").value.trim())+'»</div>';
+  box.innerHTML=html; box.classList.remove("hide");
 });
-$("#remClientSuggest") && $("#remClientSuggest").addEventListener("click", e=>{
+$("#remClientSuggest") && $("#remClientSuggest").addEventListener("click", async e=>{
+  const nw=e.target.closest("[data-newclient]");
+  if(nw){ const id=await remCreateClient(nw.dataset.newclient); if(id){ $("#remClient").value=id; $("#remClientInput").value=(REM_CLIENT_MAP&&REM_CLIENT_MAP[id])?REM_CLIENT_MAP[id]:nw.dataset.newclient; toast("Cliente creato"); } $("#remClientSuggest").classList.add("hide"); return; }
   const it=e.target.closest(".s-item[data-cid]"); if(!it) return;
   $("#remClient").value=it.dataset.cid;
   $("#remClientInput").value=it.dataset.name;
@@ -2071,9 +2127,10 @@ async function saveRem(){
   let tcid = null;
   if(remIsSuper() && k!=="generico"){
     tcid = $("#remClient").value || null;
-    if(!tcid){ const typed=$("#remClientInput").value.trim().toLowerCase();
+    if(!tcid){ const typedRaw=$("#remClientInput").value.trim(); const typed=typedRaw.toLowerCase();
       const hit=(REM_CLIENTS||[]).find(c=>(c.name||"").toLowerCase()===typed);
-      if(hit) tcid=hit.id; }
+      if(hit) tcid=hit.id;
+      else if(typedRaw) tcid=await remCreateClient(typedRaw); }   // nome nuovo -> crea al volo
   }
   const rec = ($("#remRecur").checked || k==="annuale") ? "annual" : "none";
   const payload={
