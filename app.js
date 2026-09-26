@@ -1908,6 +1908,8 @@ $("#remBox") && $("#remBox").addEventListener("click", async e=>{
   if(mv){ await remMove(mv.dataset.id, mv.dataset.mv); return; }
   const rp=e.target.closest("[data-rreopen]");
   if(rp){ await sb.from("reminders").update({status:"aperto"}).eq("id",rp.dataset.rreopen); toast("Riaperto"); loadReminders(); remDueBadge(); return; }
+  const ved=e.target.closest("[data-reventdel]");
+  if(ved){ if(!confirm("Eliminare questa voce dallo storico? L'importo verrà tolto dai totali e dal report.")) return; await sb.from("reminder_events").delete().eq("id",ved.dataset.reventdel); toast("Voce eliminata"); loadRemHistory(); return; }
 });
 
 async function remMove(id,dir){
@@ -1928,7 +1930,7 @@ async function loadRemHistory(){
     sb.from("reminders").select("id,title,kind,amount_cents,target_client_id,updated_at").eq("status","annullato").order("updated_at",{ascending:false}).limit(500)
   ]);
   const items=[];
-  (ev||[]).forEach(x=>items.push({t:"done", date:x.event_date, title:x.title, kind:x.kind, amount:x.amount_cents, cid:x.target_client_id}));
+  (ev||[]).forEach(x=>items.push({t:"done", date:x.event_date, title:x.title, kind:x.kind, amount:x.amount_cents, cid:x.target_client_id, id:x.id}));
   (canc||[]).forEach(x=>items.push({t:"canc", date:String(x.updated_at).slice(0,10), title:x.title, kind:x.kind, amount:x.amount_cents, cid:x.target_client_id, id:x.id}));
   items.sort((a,b)=> a.date<b.date?1:-1);
   if(!items.length){ box.innerHTML='<div class="empty">Ancora nessuno storico. Ciò che segni “Fatto” o “Annulla” compare qui.</div>'; return; }
@@ -1940,7 +1942,9 @@ async function loadRemHistory(){
       '<div class="rem-title">'+esc(x.title||"")+'</div>'+
       '<div class="rem-meta"><span>'+mark+'</span>'+(cname?'<span>🏷 '+esc(cname)+'</span>':'')+kl+'</div>'+
       '</div>'+(x.amount!=null?'<div class="rem-amt">'+euro(x.amount)+'</div>':'')+'</div>'+
-      (x.t==="canc"?'<div class="actions"><button class="act reopen" data-rreopen="'+x.id+'">Riapri</button><button class="act del" data-rdel="'+x.id+'">Elimina</button></div>':'')+
+      (x.t==="canc"
+        ? '<div class="actions"><button class="act reopen" data-rreopen="'+x.id+'">Riapri</button><button class="act del" data-rdel="'+x.id+'">Elimina</button></div>'
+        : '<div class="actions"><button class="act del" data-reventdel="'+x.id+'">Elimina dallo storico</button></div>')+
       '</div>';
   }).join("");
 }
