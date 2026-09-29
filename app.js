@@ -1506,6 +1506,7 @@ var AG_RULES={from:"09:30",to:"18:30",step:15};
 var AG_PXMIN=1.35;          // pixel per minuto
 var AG_DRAG=null;
 var AG_CREATE_STAFF=null, AG_REVIEW_URL="", AG_CLIENT_NAME="";
+var AG_HAS_SPA=false;   // il cliente offre servizi Hair Spa? (colonna sempre presente)
 
 function agToMin(hhmm){ const p=String(hhmm||"0:0").split(":"); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0); }
 function agMinToTime(min){ min=Math.max(0,Math.round(min)); const h=Math.floor(min/60), m=min%60; return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0"); }
@@ -1542,11 +1543,13 @@ async function loadAgenda(){
   const mount=$("#agendaGrid"); if(!mount) return;
   mount.innerHTML='<div class="loading">Carico…</div>';
   const scope=svcScopeId(); if(!scope){ mount.innerHTML='<div class="empty">Nessuna attività selezionata.</div>'; return; }
-  const [{data:staff},{data:bt}]=await Promise.all([
+  const [{data:staff},{data:bt},{data:spaSvc}]=await Promise.all([
     sb.from("staff").select("id,name,color,sort_order").eq("client_id",scope).eq("active",true).order("sort_order").order("name"),
-    sb.from("booking_types").select("rules").eq("client_id",scope).eq("key","appuntamento").maybeSingle()
+    sb.from("booking_types").select("rules").eq("client_id",scope).eq("key","appuntamento").maybeSingle(),
+    sb.from("services").select("id").eq("client_id",scope).eq("active",true).ilike("category","%hair spa%").limit(1)
   ]);
   AG_STAFF=staff||[];
+  AG_HAS_SPA = !!(spaSvc && spaSvc.length);
   const r=(bt&&bt.rules)||{};
   AG_RULES={ from:r.time_from||"09:30", to:r.time_to||"18:30", step:parseInt(r.slot_minutes,10)||15 };
   const { data:appts, error } = await sb.from("bookings")
@@ -1568,7 +1571,7 @@ function renderAgenda(){
   const noStaff = AG_STAFF.length===0;
   let cols=AG_STAFF.map(s=>({id:s.id,name:s.name,color:s.color||"#3b7a57"}));
   if(noStaff && nonSpa.length) cols=[{id:"__all__",name:"Agenda",color:"#6b7370"}];
-  if(spa.length) cols.push({id:"__spa__",name:"Hair Spa",color:"#B8986A"});
+  if(spa.length || AG_HAS_SPA) cols.push({id:"__spa__",name:"Hair Spa",color:"#B8986A"});
   const unassigned=nonSpa.filter(a=>!a.staff_id);
   if(!noStaff && unassigned.length) cols.push({id:"__none__",name:"Non assegnati",color:"#9aa3a0"});
   if(!cols.length) cols=[{id:"__all__",name:"Agenda",color:"#6b7370"}];
