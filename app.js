@@ -23,6 +23,8 @@ let LAST_BOOKINGS = [];    // ultime prenotazioni caricate (per i link WhatsApp)
 const DEFAULT_CONFIRM = "Ciao {nome}! La tua prenotazione da {attivita} è confermata per {data} alle {ora} ({persone} persone). Ti aspettiamo!";
 let NEW_COUNT = 0;         // nuove prenotazioni non ancora viste
 let MY_UID = null;         // id utente loggato (per i promemoria)
+let PENDING_BOOKING = null; // id prenotazione da aprire (deep-link da notifica push)
+try{ PENDING_BOOKING = new URLSearchParams(location.search).get("b") || null; if(PENDING_BOOKING) history.replaceState(null,"","./"); }catch(_){ }
 
 /* ---- utility ---- */
 const $ = s => document.querySelector(s);
@@ -178,6 +180,14 @@ async function boot(){
   $("#appView").classList.remove("hide");
   remDueBadge();
   switchTab(firstTab || "bookings");
+  maybeOpenPendingBooking();
+}
+
+// apre il dettaglio della prenotazione arrivata da una notifica push (deep-link ?b=...)
+function maybeOpenPendingBooking(){
+  if(!PENDING_BOOKING) return;
+  const id=PENDING_BOOKING; PENDING_BOOKING=null;
+  openBookingDetail(id);
 }
 
 function showLogin(err){
@@ -231,9 +241,15 @@ $("#statusFilter").addEventListener("change",e=>{ FILTER.status=e.target.value; 
 async function loadBookings(){
   SELECTED.clear();
   const list=$("#bookingsList"); list.innerHTML='<div class="loading">Carico…</div>';
+  const recent = FILTER.when==="recent";
   let q = sb.from("bookings")
-    .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,booking_types(label,key),services(name,duration_min,price_cents)")
-    .order("booking_date",{ascending:true}).order("booking_time",{ascending:true,nullsFirst:true});
+    .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,created_at,booking_types(label,key),services(name,duration_min,price_cents)");
+  if(recent){
+    // dalla più recente alla meno recente (in base a quando è arrivata la prenotazione)
+    q = q.order("created_at",{ascending:false}).limit(200);
+  }else{
+    q = q.order("booking_date",{ascending:true}).order("booking_time",{ascending:true,nullsFirst:true});
+  }
 
   if(ADMIN_CLIENT) q=q.eq("client_id", ADMIN_CLIENT.id);
   if(FILTER.when==="today")    q=q.eq("booking_date",isoToday(0));
@@ -246,16 +262,22 @@ async function loadBookings(){
   LAST_BOOKINGS = data;
   if(!data.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>Nessuna prenotazione con questi filtri.</div>`; return; }
 
+  // vista "Recenti": lista piatta, la più recente in alto, con la data in ogni scheda
+  if(recent){
+    list.innerHTML = `<div class="daygroup">${data.map(b=>bookingCard(b, true)).join("")}</div>`;
+    return;
+  }
+
   const groups={};
   data.forEach(b=>{ (groups[b.booking_date] ||= []).push(b); });
   list.innerHTML = Object.keys(groups).sort().map(day=>`
     <div class="daygroup">
       <div class="dayhead">${esc(fmtDay(day))}</div>
-      ${groups[day].map(bookingCard).join("")}
+      ${groups[day].map(b=>bookingCard(b)).join("")}
     </div>`).join("");
 }
 
-function bookingCard(b){
+function bookingCard(b, showDate){
   const time = b.booking_time ? b.booking_time.slice(0,5) : '<span class="notime">Orario libero</span>';
   const type = b.booking_types ? b.booking_types.label : "";
   const svc = b.services || null;   // presente per gli appuntamenti (saloni)
@@ -280,6 +302,7 @@ function bookingCard(b){
       <span class="status ${b.status}">${STATUS_LABEL[b.status]}</span>
     </div>
     <div class="bk-meta">
+      ${ showDate ? `<span>📅 <b>${esc(fmtDay(b.booking_date))}</b></span>` : "" }
       ${ svc
          ? `<span><b>${esc(svc.name)}</b>${svc.duration_min?` · ${svc.duration_min} min`:""}</span>`
          : `<span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>${type?`<span>${esc(type)}</span>`:""}` }
@@ -491,6 +514,103 @@ async function loadCustomerDetail(phone, name){
       · ${data.length} ${data.length==1?"visita confermata":"visite confermate"}
     </p>
     ${items || '<div class="empty">Nessuna visita confermata.</div>'}`;
+}
+
+/* =====================================================================
+   DETTAGLIO SINGOLA PRENOTAZIONE (apertura da notifica push)
+   ===================================================================== */
+async function openBookingDetail(id){
+  if(!id) return;
+  // porta l'utente sulla tab Prenotazioni, se disponibile
+  const bkTab=document.querySelector('.tab[data-tab="bookings"]');
+  if(bkTab && !bkTab.classList.contains("hide")) switchTab("bookings");
+
+  // evita doppioni se già aperto
+  const old=$("#bkDetailBack"); if(old) old.remove();
+
+  const back=document.createElement("div");
+  back.className="modal-back"; back.id="bkDetailBack";
+  back.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <h3>Prenotazione</h3>
+        <button class="modal-x" id="bdClose">Chiudi</button>
+      </div>
+      <div class="modal-body" id="bdBody"><div class="loading">Carico…</div></div>
+    </div>`;
+  document.body.appendChild(back);
+  const close=()=>back.remove();
+  back.querySelector("#bdClose").addEventListener("click", close);
+  back.addEventListener("click", e=>{ if(e.target===back) close(); });
+
+  const scopeId = ADMIN_CLIENT ? ADMIN_CLIENT.id : (CLIENT ? CLIENT.id : null);
+  let q = sb.from("bookings")
+    .select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,booking_types(label),services(name,duration_min,price_cents)")
+    .eq("id", id);
+  if(scopeId) q=q.eq("client_id", scopeId);
+  const { data:b, error } = await q.maybeSingle();
+
+  const body=back.querySelector("#bdBody");
+  if(error || !b){ body.innerHTML=`<div class="empty"><div class="big">◆</div>Prenotazione non trovata o non più disponibile.</div>`; return; }
+  renderBookingDetail(back, b);
+}
+
+function renderBookingDetail(back, b){
+  const body=back.querySelector("#bdBody");
+  const time = b.booking_time ? b.booking_time.slice(0,5) : "Orario libero";
+  const svc  = b.services || null;
+  const type = b.booking_types ? b.booking_types.label : "";
+  const phone= b.customer_phone || "";
+  const acts=[];
+  if(b.status!=="confermata") acts.push(`<button class="act confirm" data-bd-act="confermata">Conferma</button>`);
+  if(b.status!=="annullata")  acts.push(`<button class="act cancel"  data-bd-act="annullata">Annulla</button>`);
+  if(b.status==="annullata")  acts.push(`<button class="act reopen"  data-bd-act="in_attesa">Riapri</button>`);
+  if(b.status==="confermata" && waDigits(phone)){
+    const link=waConfirmLink(b);
+    if(link) acts.push(`<a class="act confirm" href="${link}" target="_blank" rel="noopener" data-waconfirm="1" style="text-decoration:none">Invia conferma WhatsApp</a>`);
+  }
+  if(waDigits(phone)) acts.push(`<a class="act wa" href="${waLink(phone)}" target="_blank" rel="noopener">WhatsApp</a>`);
+  acts.push(`<button class="act del" data-bd-del="1">Elimina</button>`);
+
+  body.innerHTML = `
+    <div class="bk" style="box-shadow:none; margin:0">
+      <div class="bk-top">
+        <div>
+          <div class="bk-time">${esc(time)}</div>
+          <div class="bk-name">${esc(b.customer_name||"")}</div>
+        </div>
+        <span class="status ${b.status}">${STATUS_LABEL[b.status]}</span>
+      </div>
+      <div class="bk-meta">
+        <span>📅 <b>${esc(fmtDay(b.booking_date))}</b></span>
+        ${ svc
+           ? `<span><b>${esc(svc.name)}</b>${svc.duration_min?` · ${svc.duration_min} min`:""}${svc.price_cents!=null?` · ${euro(svc.price_cents)}`:""}</span>`
+           : `<span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>${type?`<span>${esc(type)}</span>`:""}` }
+        ${phone?`<a href="tel:${esc(phone)}" style="color:inherit"><b>${esc(phone)}</b></a>`:""}
+        ${b.notes?`<span style="flex-basis:100%">✎ ${esc(b.notes)}</span>`:""}
+      </div>
+      <div class="actions">${acts.join("")}</div>
+    </div>`;
+
+  body.querySelectorAll("[data-bd-act]").forEach(btn=>btn.addEventListener("click", async ()=>{
+    btn.disabled=true;
+    const next=btn.dataset.bdAct;
+    const { error } = await sb.from("bookings").update({status:next}).eq("id",b.id);
+    if(error){ toast("Errore, riprova"); btn.disabled=false; return; }
+    b.status=next;
+    toast(next==="confermata"?"Confermata":next==="annullata"?"Annullata":"Riaperta");
+    renderBookingDetail(back, b);   // ridisegna con le azioni aggiornate (incl. conferma WhatsApp)
+    loadBookings();
+  }));
+
+  const del=body.querySelector("[data-bd-del]");
+  if(del) del.addEventListener("click", async ()=>{
+    if(!confirm("Eliminare definitivamente questa prenotazione?\nL'azione non è reversibile.")) return;
+    del.disabled=true;
+    const { error } = await sb.from("bookings").delete().eq("id",b.id);
+    if(error){ toast("Errore, riprova"); del.disabled=false; return; }
+    toast("Prenotazione eliminata"); back.remove(); loadBookings();
+  });
 }
 
 /* =====================================================================
@@ -1074,6 +1194,11 @@ async function saveManualBooking(){
    ===================================================================== */
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
+  // l'app è già aperta e l'utente tocca una notifica: apri il dettaglio della prenotazione
+  navigator.serviceWorker.addEventListener("message", (ev)=>{
+    const d=ev.data||{};
+    if(d && d.type==="open-booking" && d.id) openBookingDetail(d.id);
+  });
 }
 function urlB64ToUint8Array(b64){
   const pad="=".repeat((4-b64.length%4)%4);
