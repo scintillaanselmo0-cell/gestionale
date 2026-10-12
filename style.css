@@ -297,3 +297,79 @@ input,select{font-family:inherit}
 .rem-move button[disabled]{opacity:.35}
 .rem .actions{flex-wrap:wrap}
 .rem .actions .act{flex:0 1 auto; padding:9px 14px}
+
+/* ===== AGENDA — colonna orari anche a destra ===== */
+.ag-rail-right{border-right:0; border-left:1px solid var(--line)}
+.ag-rail-right .ag-hour{left:5px; right:auto; text-align:left}
+
+/* =======================================================================
+   INGRANDIMENTO UI MOBILE — testi e tasti più grandi, proporzionati al
+   telefono. Le "schede" della lista restano della stessa dimensione:
+   cresce solo ciò che era troppo piccolo (testi, chip, bottoni, orari).
+   Per regolare la scala, modifica i valori qui sotto.
+   ===================================================================== */
+@media (max-width:760px){
+  body{ font-size:16px }
+
+  /* navigazione e intestazioni */
+  .brand{ font-size:21px }
+  .brand small{ font-size:13px }
+  .client-tag .name{ font-size:15px }
+  .icon-btn{ font-size:14.5px; padding:9px 13px }
+  .tab{ font-size:15.5px; padding:11px 13px 13px }
+
+  /* filtri e controlli */
+  .chip{ font-size:15px; padding:9px 15px }
+  .sel, .date{ font-size:16px; padding:11px 12px }
+
+  /* bottoni */
+  .btn{ font-size:17px; padding:15px }
+  .file-btn{ font-size:15.5px; padding:12px 17px }
+  .toggle{ font-size:15px; padding:10px 15px }
+  .bulk-btn{ font-size:15px; padding:11px 15px }
+  .act{ font-size:15px; padding:12px }
+  .act.wa, .act.del{ padding:12px 15px }
+
+  /* lista prenotazioni */
+  .dayhead{ font-size:13px }
+  .bk-time{ font-size:23px }
+  .bk-name{ font-size:17px }
+  .bk-meta{ font-size:14.5px }
+  .status{ font-size:13px; padding:6px 11px }
+
+  /* storico / clienti / servizi */
+  .hist .who b{ font-size:16.5px }
+  .hist .who div{ font-size:14px }
+  .visits .n{ font-size:22px }
+  .visits .l{ font-size:12px }
+
+  /* super admin */
+  .admin-row .a-name{ font-size:16.5px }
+  .admin-row .a-slug{ font-size:13.5px }
+  .cat-chip{ font-size:12px }
+
+  /* schede impostazioni / card */
+  .card h3{ font-size:17px }
+  .card p{ font-size:15px }
+
+  /* form e modali */
+  .field label, .mfield label{ font-size:14.5px }
+  .modal-head h3{ font-size:18px }
+  .suggest .s-item{ font-size:15px }
+
+  /* promemoria */
+  .rem-title{ font-size:16.5px }
+  .rem-notes{ font-size:14.5px }
+  .rem-meta{ font-size:14px }
+  .rem-amt{ font-size:17px }
+  .rem-badge{ font-size:12px }
+
+  /* stati vuoti / caricamento */
+  .empty{ font-size:15px }
+  .loading{ font-size:15px }
+
+  /* agenda: orari e intestazioni colonna un filo più leggibili */
+  .ag-hour{ font-size:12px }
+  .ag-colhead{ font-size:13.5px }
+  .ag-b-name{ font-size:13.5px }
+}
