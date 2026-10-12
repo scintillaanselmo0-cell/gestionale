@@ -971,9 +971,10 @@ async function saveNewClient(back, close){
 }
 
 // Super admin: gestione prenotazioni di un singolo cliente
-function openClientBookings(id, name){
+async function openClientBookings(id, name){
   if(SELECT_MODE) exitSelect();
   ADMIN_CLIENT = { id, name };
+  AG_VIEW = "list";   // si entra sempre in Lista
   FILTER = { when:"all", date:"", status:"" };
   document.querySelectorAll('.chip[data-when]').forEach(x=>x.classList.toggle("on", x.dataset.when==="all"));
   const df=$("#dateFilter"); if(df) df.value="";
@@ -986,6 +987,13 @@ function openClientBookings(id, name){
   $("#adminBkBack").addEventListener("click", closeClientBookings);
   $("#tab-admin").classList.add("hide");
   $("#tab-bookings").classList.remove("hide");
+  // questo cliente ha un'agenda appuntamenti? decide se mostrare il toggle Lista/Agenda
+  AG_HAS_APPT = false;
+  try{
+    const { data:bt } = await sb.from("booking_types").select("key").eq("client_id", id).eq("key","appuntamento").maybeSingle();
+    AG_HAS_APPT = !!bt;
+  }catch(_){ }
+  agApplyView();
   loadBookings();
 }
 function closeClientBookings(){
@@ -1632,6 +1640,13 @@ var AG_PXMIN=1.35;          // pixel per minuto
 var AG_DRAG=null;
 var AG_CREATE_STAFF=null, AG_REVIEW_URL="", AG_CLIENT_NAME="";
 var AG_HAS_SPA=false;   // il cliente offre servizi Hair Spa? (colonna sempre presente)
+var AG_HAS_APPT=false;  // il cliente in gestione (super admin) ha un'agenda appuntamenti?
+
+// questo scope ha un'agenda appuntamenti? (titolare: dai suoi tipi; super admin: dal cliente aperto)
+function agScopeHasAppt(){
+  if(ADMIN_CLIENT) return AG_HAS_APPT;
+  return (typeof BTYPES!=="undefined") && BTYPES.some(t=>t.key==="appuntamento");
+}
 
 function agToMin(hhmm){ const p=String(hhmm||"0:0").split(":"); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0); }
 function agMinToTime(min){ min=Math.max(0,Math.round(min)); const h=Math.floor(min/60), m=min%60; return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0"); }
@@ -1643,15 +1658,16 @@ function agShiftDay(iso,delta){ const d=new Date(iso+"T00:00:00"); d.setDate(d.g
 function agApplyView(){
   const isAg = AG_VIEW==="agenda";
   const tab=$("#tab-bookings"); if(tab) tab.classList.toggle("ag-open", isAg);   // larghezza piena senza dipendere da :has()
-  const hasAppt = (typeof BTYPES!=="undefined") && BTYPES.some(t=>t.key==="appuntamento");
-  const ab=$("#bkViewAgenda"); if(ab) ab.classList.toggle("hide", !hasAppt);
-  const tg=$("#bkViewList")?.parentElement; if(tg) tg.classList.toggle("hide", !hasAppt);   // niente toggle se non è un'agenda
+  const hasAppt = agScopeHasAppt();
+  const showToggle = hasAppt || isAg;   // mentre sei in agenda il toggle resta sempre, per poter tornare a Lista
+  const ab=$("#bkViewAgenda"); if(ab) ab.classList.toggle("hide", !showToggle);
+  const tg=$("#bkViewList")?.parentElement; if(tg) tg.classList.toggle("hide", !showToggle);   // niente toggle se non è un'agenda
   const t=(sel,on)=>{ const el=$(sel); if(el) el.classList.toggle("hide",!on); };
   t("#bkListTools", !isAg);
   t("#bookingsList",!isAg);
   t("#agendaView",   isAg);
   const lb=$("#bkViewList"); if(lb) lb.classList.toggle("on",!isAg);
-  if(ab) ab.classList.toggle("on", isAg && hasAppt);
+  if(ab) ab.classList.toggle("on", isAg);
   if(isAg){ const nb=$("#newBanner"); if(nb) nb.classList.add("hide"); const d=$("#agDate"); if(d) d.value=AG_DATE; loadAgenda(); }
 }
 
@@ -1710,8 +1726,13 @@ function renderAgenda(){
   const colOf=a=> agIsSpa(a) ? "__spa__" : (noStaff ? "__all__" : (a.staff_id || "__none__"));
 
   let rail='<div class="ag-rail" style="height:'+H+'px">';
-  for(let m=fromMin;m<=endMin;m+=60){ rail+='<div class="ag-hour" style="top:'+((m-fromMin)*AG_PXMIN)+'px">'+agMinToTime(m)+'</div>'; }
-  rail+='</div>';
+  let railRight='<div class="ag-rail ag-rail-right" style="height:'+H+'px">';
+  for(let m=fromMin;m<=endMin;m+=60){
+    const top=(m-fromMin)*AG_PXMIN;
+    rail     +='<div class="ag-hour" style="top:'+top+'px">'+agMinToTime(m)+'</div>';
+    railRight+='<div class="ag-hour" style="top:'+top+'px">'+agMinToTime(m)+'</div>';
+  }
+  rail+='</div>'; railRight+='</div>';
 
   const step=AG_RULES.step||15;
   const colsHtml=cols.map(c=>{
@@ -1722,7 +1743,7 @@ function renderAgenda(){
            '<div class="ag-colbody" data-staff="'+esc(String(c.id))+'" style="height:'+H+'px">'+lines+blocks+'</div></div>';
   }).join("");
 
-  mount.innerHTML='<div class="ag-scroll"><div class="ag-inner">'+rail+'<div class="ag-cols">'+colsHtml+'</div></div></div>';
+  mount.innerHTML='<div class="ag-scroll"><div class="ag-inner">'+rail+'<div class="ag-cols">'+colsHtml+'</div>'+railRight+'</div></div>';
   agBindPointer(mount, fromMin);
 }
 
