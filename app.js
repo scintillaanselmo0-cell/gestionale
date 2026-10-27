@@ -1862,7 +1862,8 @@ function agOpenMenu(b, el){
   const conf = b.status!=="confermata" ? '<button class="ag-mi" data-agact="confermata">Conferma</button>' : "";
   const ann  = b.status!=="annullata"  ? '<button class="ag-mi" data-agact="annullata">Annulla</button>' : "";
   const m=document.createElement("div"); m.className="ag-menu"; m.id="agMenu";
-  m.innerHTML='<div class="ag-menu-h">'+esc(b.customer_name||"")+(b.services?" \u00b7 "+esc(b.services.name):"")+'</div>'+conf+ann+waHtml+
+  m.innerHTML='<div class="ag-menu-h">'+esc(b.customer_name||"")+(b.services?" \u00b7 "+esc(b.services.name):"")+'</div>'+
+    '<button class="ag-mi" data-agact="__edit__">Modifica</button>'+conf+ann+waHtml+
     '<button class="ag-mi del" data-agact="__del__">Elimina</button>';
   document.body.appendChild(m);
   const r=el.getBoundingClientRect();
@@ -1871,6 +1872,7 @@ function agOpenMenu(b, el){
   m.addEventListener("click", async ev=>{
     const btn=ev.target.closest("[data-agact]"); if(!btn) return;
     const act=btn.dataset.agact;
+    if(act==="__edit__"){ agCloseMenu(); agEditAppointment(b); return; }
     if(act==="wa"){
       const ora=(b.booking_time||"").slice(0,5);
       const msg="Ciao "+(b.customer_name||"")+", confermiamo il tuo appuntamento"+(b.services?" per "+b.services.name:"")+" da "+(AG_CLIENT_NAME||"")+" il "+fmtDay(AG_DATE)+" alle "+ora+". A presto!";
@@ -1890,6 +1892,116 @@ function agOpenMenu(b, el){
 }
 function agCloseMenu(){ const m=$("#agMenu"); if(m) m.remove(); }
 document.addEventListener("click",(e)=>{ if(!e.target.closest(".ag-menu") && !e.target.closest(".ag-block")) agCloseMenu(); });
+
+/* ---- modifica appuntamento dall'agenda (orario, nome, servizio, operatore, ecc.) ---- */
+async function agEditAppointment(b){
+  const scope=svcScopeId(); if(!scope){ toast("Nessuna attività selezionata"); return; }
+  // dati completi della prenotazione + elenchi per i menu a tendina
+  const [{ data:full }, { data:svcs }, { data:staff }] = await Promise.all([
+    sb.from("bookings").select("id,customer_name,customer_phone,booking_date,booking_time,party_size,status,notes,staff_id,duration_min,service_id").eq("id", b.id).maybeSingle(),
+    sb.from("services").select("id,name,duration_min").eq("client_id",scope).eq("active",true).order("sort_order").order("name"),
+    sb.from("staff").select("id,name").eq("client_id",scope).eq("active",true).order("sort_order").order("name")
+  ]);
+  const bk = full || b;
+  const SV = svcs||[], ST = staff||[];
+
+  const back=document.createElement("div"); back.className="modal-back"; back.id="agEditBack";
+  back.innerHTML = `
+    <div class="modal">
+      <div class="modal-head"><h3>Modifica appuntamento</h3><button class="modal-x" id="aeClose">✕</button></div>
+      <div class="modal-body">
+        <div id="aeMsg" class="msg"></div>
+        <div class="mfield"><label>Nome</label><input id="aeName" class="input" placeholder="Nome cliente" /></div>
+        <div class="mfield"><label>Telefono <span style="color:var(--muted);font-weight:400">(facolt.)</span></label><input id="aePhone" class="input" type="tel" /></div>
+        <div class="mfield"><label>Servizio</label>
+          <select id="aeService" class="input">
+            <option value="">— nessuno —</option>
+            ${SV.map(s=>`<option value="${esc(s.id)}" data-dur="${s.duration_min||""}">${esc(s.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="mrow">
+          <div class="mfield"><label>Data</label><input id="aeDate" class="input" type="date" /></div>
+          <div class="mfield"><label>Orario</label><input id="aeTime" class="input" type="time" /></div>
+        </div>
+        <div class="mrow">
+          <div class="mfield"><label>Durata (min)</label><input id="aeDur" class="input" type="number" min="5" step="5" /></div>
+          <div class="mfield"><label>Operatore</label>
+            <select id="aeStaff" class="input">
+              <option value="">— nessuno —</option>
+              ${ST.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="mfield"><label>Stato</label>
+          <select id="aeStatus" class="input">
+            <option value="confermata">Confermata</option>
+            <option value="in_attesa">In attesa</option>
+            <option value="annullata">Annullata</option>
+          </select>
+        </div>
+        <div class="mfield"><label>Note <span style="color:var(--muted);font-weight:400">(facolt.)</span></label><input id="aeNotes" class="input" /></div>
+        <div style="display:flex; gap:10px; margin-top:6px">
+          <button class="btn" id="aeSave" style="flex:1">Salva</button>
+          <button class="chip" id="aeDelete" style="border-color:var(--stop-line); color:var(--stop); padding:0 16px">Elimina</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  const close=()=>back.remove();
+  back.querySelector("#aeClose").addEventListener("click", close);
+  back.addEventListener("click", e=>{ if(e.target===back) close(); });
+
+  // precompila
+  back.querySelector("#aeName").value  = bk.customer_name||"";
+  back.querySelector("#aePhone").value = bk.customer_phone||"";
+  back.querySelector("#aeService").value = bk.service_id||"";
+  back.querySelector("#aeDate").value  = bk.booking_date||AG_DATE;
+  back.querySelector("#aeTime").value  = bk.booking_time?String(bk.booking_time).slice(0,5):"";
+  const svcDur = bk.service_id ? (SV.find(s=>s.id===bk.service_id)||{}).duration_min : null;
+  back.querySelector("#aeDur").value   = bk.duration_min || svcDur || "";
+  back.querySelector("#aeStaff").value = bk.staff_id||"";
+  back.querySelector("#aeStatus").value= bk.status||"confermata";
+  back.querySelector("#aeNotes").value = bk.notes||"";
+
+  // cambiando servizio, se la durata è vuota la riempio con quella del servizio
+  back.querySelector("#aeService").addEventListener("change", e=>{
+    const opt=e.target.selectedOptions[0]; const d=opt?opt.dataset.dur:"";
+    const durEl=back.querySelector("#aeDur");
+    if(d && !durEl.value) durEl.value=d;
+  });
+
+  back.querySelector("#aeSave").addEventListener("click", async ()=>{
+    const m=back.querySelector("#aeMsg"); m.className="msg";
+    const name=back.querySelector("#aeName").value.trim();
+    if(!name){ m.className="msg err"; m.textContent="Inserisci il nome."; return; }
+    const date=back.querySelector("#aeDate").value;
+    if(!date){ m.className="msg err"; m.textContent="Inserisci la data."; return; }
+    const durRaw=back.querySelector("#aeDur").value;
+    const patch={
+      customer_name: name,
+      customer_phone: back.querySelector("#aePhone").value.trim() || null,
+      service_id: back.querySelector("#aeService").value || null,
+      booking_date: date,
+      booking_time: back.querySelector("#aeTime").value || null,
+      duration_min: durRaw!=="" ? (parseInt(durRaw,10)||null) : null,
+      staff_id: back.querySelector("#aeStaff").value || null,
+      status: back.querySelector("#aeStatus").value,
+      notes: back.querySelector("#aeNotes").value.trim() || null
+    };
+    const btn=back.querySelector("#aeSave"); btn.disabled=true; btn.textContent="Salvo…";
+    const { error } = await sb.from("bookings").update(patch).eq("id", bk.id);
+    btn.disabled=false; btn.textContent="Salva";
+    if(error){ m.className="msg err"; m.textContent="Errore: "+error.message; return; }
+    toast("Appuntamento aggiornato"); close(); loadAgenda();
+  });
+
+  back.querySelector("#aeDelete").addEventListener("click", async ()=>{
+    if(!confirm("Eliminare questo appuntamento?")) return;
+    const { error } = await sb.from("bookings").delete().eq("id", bk.id);
+    if(error){ toast("Errore: "+error.message); return; }
+    toast("Appuntamento eliminato"); close(); loadAgenda();
+  });
+}
 
 /* ---- gestione personale ---- */
 async function openStaffModal(){
