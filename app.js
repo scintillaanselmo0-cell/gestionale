@@ -1638,6 +1638,8 @@ var AG_APPTS=[];
 var AG_RULES={from:"09:30",to:"18:30",step:15};
 var AG_PXMIN=1.35;          // pixel per minuto
 var AG_DRAG=null;
+var AG_TAP=null;            // possibile tocco su spazio vuoto (per nuovo appuntamento)
+var AG_POINTER_BOUND=false; // i listener globali di drag sono installati una sola volta
 var AG_CREATE_STAFF=null, AG_REVIEW_URL="", AG_CLIENT_NAME="";
 var AG_HAS_SPA=false;   // il cliente offre servizi Hair Spa? (colonna sempre presente)
 var AG_HAS_APPT=false;  // il cliente in gestione (super admin) ha un'agenda appuntamenti?
@@ -1765,7 +1767,7 @@ function agBlockHtml(a,fromMin){
 }
 
 function agBindPointer(mount, fromMin){
-  let tap=null;   // possibile tocco su spazio vuoto
+  // pointerdown sulla griglia corrente: avvia drag/resize su un blocco, o memorizza un tap su spazio vuoto
   mount.onpointerdown=(e)=>{
     const resize=e.target.closest(".ag-resize");
     const block=e.target.closest(".ag-block");
@@ -1777,15 +1779,21 @@ function agBindPointer(mount, fromMin){
         startY:e.clientY, startX:e.clientX,
         origTop:parseFloat(block.style.top)||0, origH:parseFloat(block.style.height)||22,
         fromMin, moved:false };
-      if(block.setPointerCapture) block.setPointerCapture(e.pointerId);
       block.classList.add(resize?"resizing":"moving");
       return;
     }
-    tap={ x:e.clientX, y:e.clientY, t:Date.now(), body };   // memorizzo, NON apro
+    AG_TAP={ x:e.clientX, y:e.clientY, t:Date.now(), body, fromMin };   // memorizzo, NON apro
   };
-  mount.onpointermove=(e)=>{
-    if(tap && (Math.abs(e.clientX-tap.x)>8 || Math.abs(e.clientY-tap.y)>8)) tap=null;  // e uno scroll
+
+  // Listener globali: installati UNA SOLA VOLTA e agganciati a window, così la trascinatura
+  // segue il puntatore ovunque (anche fuori dalla griglia) senza dipendere dalla cattura del blocco.
+  if(AG_POINTER_BOUND) return;
+  AG_POINTER_BOUND=true;
+
+  window.addEventListener("pointermove", (e)=>{
+    if(AG_TAP && (Math.abs(e.clientX-AG_TAP.x)>8 || Math.abs(e.clientY-AG_TAP.y)>8)) AG_TAP=null;  // è uno scroll
     if(!AG_DRAG) return;
+    e.preventDefault();
     const dy=e.clientY-AG_DRAG.startY, dx=e.clientX-AG_DRAG.startX;
     if(Math.abs(dy)>4||Math.abs(dx)>4) AG_DRAG.moved=true;
     if(AG_DRAG.mode==="resize"){
@@ -1796,21 +1804,23 @@ function agBindPointer(mount, fromMin){
       const tb=under&&under.closest?under.closest(".ag-colbody"):null;
       if(tb && tb!==AG_DRAG.el.parentElement) tb.appendChild(AG_DRAG.el);
     }
-  };
-  const finish=async(e)=>{
-    if(tap && !AG_DRAG){
-      const moved=Math.abs(e.clientX-tap.x)>8||Math.abs(e.clientY-tap.y)>8;
-      const quick=(Date.now()-tap.t)<600;
-      const body=tap.body, cy=e.clientY; tap=null;
-      if(!moved && quick){
+  }, { passive:false });
+
+  window.addEventListener("pointerup", async (e)=>{
+    // tap su spazio vuoto -> nuovo appuntamento
+    if(AG_TAP && !AG_DRAG){
+      const moved=Math.abs(e.clientX-AG_TAP.x)>8||Math.abs(e.clientY-AG_TAP.y)>8;
+      const quick=(Date.now()-AG_TAP.t)<600;
+      const body=AG_TAP.body, cy=e.clientY, fm=AG_TAP.fromMin; AG_TAP=null;
+      if(!moved && quick && body){
         const rect=body.getBoundingClientRect();
-        const min=agSnap(fromMin + (cy-rect.top)/AG_PXMIN);
+        const min=agSnap(fm + (cy-rect.top)/AG_PXMIN);
         const raw=body.dataset.staff; const staff=(raw && raw.indexOf("__")!==0)?raw:null;
-        openAddModal({ date:AG_DATE, time:agMinToTime(Math.max(fromMin,min)), staff:staff });
+        openAddModal({ date:AG_DATE, time:agMinToTime(Math.max(fm,min)), staff:staff });
       }
       return;
     }
-    tap=null;
+    AG_TAP=null;
     if(!AG_DRAG) return;
     const D=AG_DRAG; AG_DRAG=null;
     D.el.classList.remove("moving","resizing");
@@ -1827,9 +1837,12 @@ function agBindPointer(mount, fromMin){
       await agUpdate(D.id, patch);
     }
     loadAgenda();
-  };
-  mount.onpointerup=finish;
-  mount.onpointercancel=()=>{ tap=null; if(AG_DRAG){ AG_DRAG.el.classList.remove("moving","resizing"); AG_DRAG=null; loadAgenda(); } };
+  });
+
+  window.addEventListener("pointercancel", ()=>{
+    AG_TAP=null;
+    if(AG_DRAG){ AG_DRAG.el.classList.remove("moving","resizing"); AG_DRAG=null; loadAgenda(); }
+  });
 }
 
 async function agUpdate(id, patch){
