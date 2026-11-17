@@ -13,6 +13,8 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let ME = null;            // { role, client_id }
 let CLIENT = null;        // riga clients dell'utente (per owner)
 let FILTER = { when:"all", date:"", status:"" };
+const TRUNK_KEY = "trunk_show";   // tipo "TRUNK SHOW" (deve combaciare con la key inviata dal sito)
+let TRUNK_ONLY = false;            // filtro attivo: mostra solo le prenotazioni trunk show
 let ADMIN_CLIENT = null;   // se valorizzato, il super admin sta gestendo le prenotazioni di questo cliente
 let SELECT_MODE = false;   // modalità selezione multipla attiva
 const SELECTED = new Set();
@@ -173,6 +175,10 @@ async function boot(){
   const { data:bts } = await sb.from("booking_types").select("key,label").eq("client_id",CLIENT.id).eq("active",true).order("sort_order");
   BTYPES = bts||[];
   $("#addBookingBtn").classList.toggle("hide", !enabled.includes("prenotazioni"));
+  // chip "TRUNK SHOW": visibile solo se il cliente ha quel tipo di prenotazione
+  const hasTrunk = BTYPES.some(t => t.key===TRUNK_KEY || (t.label||"").trim().toUpperCase()==="TRUNK SHOW");
+  const trkChip = $("#bkTrunkFilter");
+  if(trkChip) trkChip.classList.toggle("hide", !hasTrunk);
 
   startRealtime();
 
@@ -227,16 +233,36 @@ function switchTab(name){
 /* =====================================================================
    PRENOTAZIONI
    ===================================================================== */
+// riconosce una prenotazione "trunk show" (per key o per etichetta)
+function isTrunk(b){
+  const t = b.booking_types; if(!t) return false;
+  return t.key===TRUNK_KEY || (t.label||"").trim().toUpperCase()==="TRUNK SHOW";
+}
+
 document.querySelectorAll(".chip[data-when]").forEach(c=>c.addEventListener("click",()=>{
+  TRUNK_ONLY=false; $("#bkTrunkFilter")?.classList.remove("on");
   document.querySelectorAll(".chip[data-when]").forEach(x=>x.classList.remove("on"));
   c.classList.add("on"); FILTER.when=c.dataset.when; $("#dateFilter").value=""; loadBookings();
 }));
 $("#dateFilter").addEventListener("change",e=>{
+  TRUNK_ONLY=false; $("#bkTrunkFilter")?.classList.remove("on");
   FILTER.date=e.target.value; FILTER.when="date";
   document.querySelectorAll(".chip[data-when]").forEach(x=>x.classList.remove("on"));
   loadBookings();
 });
 $("#statusFilter").addEventListener("change",e=>{ FILTER.status=e.target.value; loadBookings(); });
+
+// chip "TRUNK SHOW": mostra solo le prenotazioni del trunk show (tutte le date)
+$("#bkTrunkFilter")?.addEventListener("click",()=>{
+  TRUNK_ONLY = !TRUNK_ONLY;
+  $("#bkTrunkFilter").classList.toggle("on", TRUNK_ONLY);
+  if(TRUNK_ONLY){
+    // esco dagli altri filtri data e mostro tutte le date
+    FILTER.when="all"; FILTER.date=""; const df=$("#dateFilter"); if(df) df.value="";
+    document.querySelectorAll(".chip[data-when]").forEach(x=>x.classList.toggle("on", x.dataset.when==="all"));
+  }
+  loadBookings();
+});
 
 async function loadBookings(){
   SELECTED.clear();
@@ -260,16 +286,23 @@ async function loadBookings(){
   const { data, error } = await q;
   if(error){ list.innerHTML=`<div class="empty">Errore nel caricamento.</div>`; return; }
   LAST_BOOKINGS = data;
-  if(!data.length){ list.innerHTML=`<div class="empty"><div class="big">◆</div>Nessuna prenotazione con questi filtri.</div>`; return; }
+  // filtro TRUNK SHOW: tengo solo le prenotazioni dedicate
+  const rows = TRUNK_ONLY ? (data||[]).filter(isTrunk) : data;
+  if(!rows.length){
+    list.innerHTML = TRUNK_ONLY
+      ? `<div class="empty"><div class="big">◆</div>Nessuna prenotazione TRUNK SHOW.</div>`
+      : `<div class="empty"><div class="big">◆</div>Nessuna prenotazione con questi filtri.</div>`;
+    return;
+  }
 
   // vista "Recenti": lista piatta, la più recente in alto, con la data in ogni scheda
   if(recent){
-    list.innerHTML = `<div class="daygroup">${data.map(b=>bookingCard(b, true)).join("")}</div>`;
+    list.innerHTML = `<div class="daygroup">${rows.map(b=>bookingCard(b, true)).join("")}</div>`;
     return;
   }
 
   const groups={};
-  data.forEach(b=>{ (groups[b.booking_date] ||= []).push(b); });
+  rows.forEach(b=>{ (groups[b.booking_date] ||= []).push(b); });
   list.innerHTML = Object.keys(groups).sort().map(day=>`
     <div class="daygroup">
       <div class="dayhead">${esc(fmtDay(day))}</div>
@@ -280,6 +313,7 @@ async function loadBookings(){
 function bookingCard(b, showDate){
   const time = b.booking_time ? b.booking_time.slice(0,5) : '<span class="notime">Orario libero</span>';
   const type = b.booking_types ? b.booking_types.label : "";
+  const trunk = isTrunk(b);        // prenotazione del trunk show
   const svc = b.services || null;   // presente per gli appuntamenti (saloni)
   const acts = [];
   if(b.status!=="confermata") acts.push(`<button class="act confirm" data-act="confermata" data-id="${b.id}">Conferma</button>`);
@@ -288,7 +322,7 @@ function bookingCard(b, showDate){
   if(waDigits(b.customer_phone)) acts.push(`<a class="act wa" href="${waLink(b.customer_phone)}" target="_blank" rel="noopener" title="WhatsApp">WhatsApp</a>`);
   acts.push(`<button class="act del" data-del="${b.id}" title="Elimina definitivamente">Elimina</button>`);
   return `
-  <div class="bk" data-id="${b.id}">
+  <div class="bk${trunk?' trunk':''}" data-id="${b.id}">
     <div class="bk-top">
       <div style="display:flex; align-items:flex-start; gap:12px">
         <span class="pick" aria-hidden="true"></span>
@@ -305,7 +339,7 @@ function bookingCard(b, showDate){
       ${ showDate ? `<span>📅 <b>${esc(fmtDay(b.booking_date))}</b></span>` : "" }
       ${ svc
          ? `<span><b>${esc(svc.name)}</b>${svc.duration_min?` · ${svc.duration_min} min`:""}</span>`
-         : `<span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>${type?`<span>${esc(type)}</span>`:""}` }
+         : `<span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>${type?(trunk?`<span style="background:#AE874B;color:#fff;padding:2px 9px;border-radius:5px;font-weight:700;letter-spacing:.4px;font-size:12px">${esc(type)}</span>`:`<span>${esc(type)}</span>`):""}` }
       <a href="tel:${esc(b.customer_phone)}" style="color:inherit"><b>${esc(b.customer_phone)}</b></a>
       ${b.notes?`<span style="flex-basis:100%">✎ ${esc(b.notes)}</span>`:""}
     </div>
@@ -560,6 +594,7 @@ function renderBookingDetail(back, b){
   const time = b.booking_time ? b.booking_time.slice(0,5) : "Orario libero";
   const svc  = b.services || null;
   const type = b.booking_types ? b.booking_types.label : "";
+  const trunk= isTrunk(b);
   const phone= b.customer_phone || "";
   const acts=[];
   if(b.status!=="confermata") acts.push(`<button class="act confirm" data-bd-act="confermata">Conferma</button>`);
@@ -585,7 +620,7 @@ function renderBookingDetail(back, b){
         <span>📅 <b>${esc(fmtDay(b.booking_date))}</b></span>
         ${ svc
            ? `<span><b>${esc(svc.name)}</b>${svc.duration_min?` · ${svc.duration_min} min`:""}${svc.price_cents!=null?` · ${euro(svc.price_cents)}`:""}</span>`
-           : `<span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>${type?`<span>${esc(type)}</span>`:""}` }
+           : `<span><b>${b.party_size}</b> ${b.party_size==1?"persona":"persone"}</span>${type?(trunk?`<span style="background:#AE874B;color:#fff;padding:2px 9px;border-radius:5px;font-weight:700;letter-spacing:.4px;font-size:12px">${esc(type)}</span>`:`<span>${esc(type)}</span>`):""}` }
         ${phone?`<a href="tel:${esc(phone)}" style="color:inherit"><b>${esc(phone)}</b></a>`:""}
         ${b.notes?`<span style="flex-basis:100%">✎ ${esc(b.notes)}</span>`:""}
       </div>
