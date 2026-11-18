@@ -243,16 +243,21 @@ async function loadCartellone(){
   const { data, error } = await sb.from("cartellone_prenotazioni").select("*").order("numero");
   if(error){ list.innerHTML='<div class="card" style="text-align:center">Errore nel caricamento del cartellone.</div>'; return; }
   CART_ROWS = data||[];
-  $("#cartCount").textContent = CART_ROWS.length;
+  const paidRows = CART_ROWS.filter(r=>(r.status||"paid")==="paid");
+  $("#cartCount").textContent = paidRows.length;
   if(!CART_ROWS.length){ list.innerHTML='<div class="card" style="text-align:center; color:var(--muted)">Ancora nessuna prenotazione.</div>'; return; }
   const rows = CART_ROWS.map(r=>{
     const digits=(r.contatto||"").replace(/\D/g,"");
     const wa = digits.length>=9 ? `<a href="https://wa.me/${digits.startsWith('39')?digits:'39'+digits}" target="_blank" rel="noopener">${esc(r.contatto)}</a>` : esc(r.contatto||"");
     const when = r.created_at ? new Date(r.created_at).toLocaleString("it-IT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
-    return `<tr><td style="font-weight:700; color:var(--spark)">${r.numero}</td><td>${esc(r.nome||"")}</td><td>${wa}${r.email?`<br><span style="color:var(--muted); font-size:12px">${esc(r.email)}</span>`:""}</td><td style="color:var(--muted); white-space:nowrap">${when}</td><td style="text-align:right"><button class="cart-del" data-n="${r.numero}" title="Cancella e libera il numero">🗑</button></td></tr>`;
+    const st = (r.status||"paid")==="paid"
+      ? '<span class="cart-badge paid">Pagato</span>'
+      : '<span class="cart-badge pend">In attesa</span>';
+    const imp = r.amount_cents ? (r.amount_cents/100).toLocaleString("it-IT",{style:"currency",currency:"EUR"}) : "";
+    return `<tr><td style="font-weight:700; color:var(--spark)">${r.numero}</td><td>${esc(r.nome||"")}</td><td>${wa}${r.email?`<br><span style="color:var(--muted); font-size:12px">${esc(r.email)}</span>`:""}</td><td>${st}${imp?`<br><span style="color:var(--muted); font-size:12px">${imp}</span>`:""}</td><td style="color:var(--muted); white-space:nowrap">${when}</td><td style="text-align:right"><button class="cart-del" data-n="${r.numero}" title="Cancella e libera il numero">🗑</button></td></tr>`;
   }).join("");
   list.innerHTML = `<div class="card cart-tblwrap" style="padding:0; overflow:auto"><table class="cart-tbl">
-    <thead><tr><th>N°</th><th>Nome</th><th>Contatto</th><th>Quando</th><th></th></tr></thead>
+    <thead><tr><th>N°</th><th>Nome</th><th>Contatto</th><th>Stato</th><th>Quando</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 $("#cartRefreshBtn")?.addEventListener("click", loadCartellone);
@@ -270,8 +275,8 @@ function cartShowWinner(){
   const n = parseInt($("#cartWinNum").value,10);
   const box=$("#cartWinner"); box.classList.remove("hide");
   if(!n || n<1 || n>90){ box.innerHTML='<div style="color:var(--muted)">Inserisci il numero estratto (1–90).</div>'; return; }
-  const w = CART_ROWS.find(r=>Number(r.numero)===n);
-  if(!w){ box.innerHTML=`<div style="font-size:46px; font-weight:800; color:var(--spark); line-height:1">${n}</div><div style="color:var(--muted); margin-top:4px">Numero non prenotato — nessun vincitore.</div>`; return; }
+  const w = CART_ROWS.find(r=>Number(r.numero)===n && (r.status||"paid")==="paid");
+  if(!w){ box.innerHTML=`<div style="font-size:46px; font-weight:800; color:var(--spark); line-height:1">${n}</div><div style="color:var(--muted); margin-top:4px">Numero non acquistato — nessun vincitore.</div>`; return; }
   const digits=(w.contatto||"").replace(/\D/g,""); const wa=digits.length>=9?(digits.startsWith('39')?digits:'39'+digits):"";
   box.innerHTML=`<div style="font-size:54px; font-weight:800; color:var(--spark); line-height:1">🎉 ${w.numero}</div>
     <div style="font-size:18px; font-weight:700; margin-top:6px">${esc(w.nome||"")}</div>
