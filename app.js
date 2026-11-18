@@ -9,6 +9,9 @@ const VAPID_PUBLIC_KEY  = "BHzOjm_hlNTO6sVR4H1BA23hzVVYO_MeVwyXeQwQNNeHSsRe6idQ2
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+/* Cartellone della Fortuna — stessa base dati del gestionale (tabella cartellone_prenotazioni) */
+let CART_ROWS = [];
+
 /* ---- stato ---- */
 let ME = null;            // { role, client_id }
 let CLIENT = null;        // riga clients dell'utente (per owner)
@@ -153,6 +156,7 @@ async function boot(){
   if(ME.role==="super_admin"){
     document.querySelectorAll('.tab[data-tab="bookings"], .tab[data-tab="history"], .tab[data-tab="customers"], .tab[data-tab="services"], .tab[data-tab="reports"], .tab[data-tab="vouchers"], .tab[data-tab="settings"]').forEach(t=>t.classList.add("hide"));
     $("#adminTabBtn").classList.remove("hide");
+    $("#cartTabBtn").classList.remove("hide");
     $("#loginView").classList.add("hide");
     $("#appView").classList.remove("hide");
     remDueBadge();
@@ -218,7 +222,7 @@ function switchTab(name){
   if(SELECT_MODE) exitSelect();
   if(name==="bookings") clearNewBadge();
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.tab===name));
-  ["bookings","history","customers","services","reports","vouchers","reminders","settings","admin"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
+  ["bookings","history","customers","services","reports","vouchers","reminders","settings","admin","cartellone"].forEach(n=>$("#tab-"+n).classList.toggle("hide",n!==name));
   if(name==="bookings"){ loadBookings(); agApplyView(); }
   if(name==="history")  loadHistory();
   if(name==="customers") loadCustomers();
@@ -228,7 +232,52 @@ function switchTab(name){
   if(name==="reminders") loadReminders();
   if(name==="settings") loadSettings();
   if(name==="admin")    loadAdmin();
+  if(name==="cartellone") loadCartellone();
 }
+
+/* =====================================================================
+   CARTELLONE DELLA FORTUNA (solo super admin, sola lettura)
+   ===================================================================== */
+async function loadCartellone(){
+  const list=$("#cartList"); list.innerHTML='<div class="loading">Carico…</div>';
+  const { data, error } = await sb.from("cartellone_prenotazioni").select("*").order("numero");
+  if(error){ list.innerHTML='<div class="card" style="text-align:center">Errore nel caricamento del cartellone.</div>'; return; }
+  CART_ROWS = data||[];
+  $("#cartCount").textContent = CART_ROWS.length;
+  if(!CART_ROWS.length){ list.innerHTML='<div class="card" style="text-align:center; color:var(--muted)">Ancora nessuna prenotazione.</div>'; return; }
+  const rows = CART_ROWS.map(r=>{
+    const digits=(r.contatto||"").replace(/\D/g,"");
+    const wa = digits.length>=9 ? `<a href="https://wa.me/${digits.startsWith('39')?digits:'39'+digits}" target="_blank" rel="noopener">${esc(r.contatto)}</a>` : esc(r.contatto||"");
+    const when = r.created_at ? new Date(r.created_at).toLocaleString("it-IT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
+    return `<tr><td style="font-weight:700; color:var(--spark)">${r.numero}</td><td>${esc(r.nome||"")}</td><td>${wa}${r.email?`<br><span style="color:var(--muted); font-size:12px">${esc(r.email)}</span>`:""}</td><td style="color:var(--muted); white-space:nowrap">${when}</td></tr>`;
+  }).join("");
+  list.innerHTML = `<div class="card cart-tblwrap" style="padding:0; overflow:auto"><table class="cart-tbl">
+    <thead><tr><th>N°</th><th>Nome</th><th>Contatto</th><th>Quando</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+$("#cartRefreshBtn")?.addEventListener("click", loadCartellone);
+$("#cartDrawBtn")?.addEventListener("click", ()=>{
+  if(!CART_ROWS.length){ toast("Nessun numero da estrarre."); return; }
+  const box=$("#cartWinner"); box.classList.remove("hide");
+  const w=CART_ROWS[Math.floor(Math.random()*CART_ROWS.length)];
+  let t=0; const spin=setInterval(()=>{
+    const r=CART_ROWS[Math.floor(Math.random()*CART_ROWS.length)];
+    box.innerHTML=`<div style="font-size:46px; font-weight:800; color:var(--spark); line-height:1">${r.numero}</div>`;
+    if(++t>=24){ clearInterval(spin);
+      const digits=(w.contatto||"").replace(/\D/g,""); const wa=digits.length>=9?(digits.startsWith('39')?digits:'39'+digits):"";
+      box.innerHTML=`<div style="font-size:54px; font-weight:800; color:var(--spark); line-height:1">🎉 ${w.numero}</div>
+        <div style="font-size:18px; font-weight:700; margin-top:6px">${esc(w.nome||"")}</div>
+        <div style="color:var(--muted); margin-top:2px">${wa?`<a href="https://wa.me/${wa}" target="_blank" rel="noopener">${esc(w.contatto)}</a>`:esc(w.contatto||"")}</div>`;
+    }
+  },70);
+});
+$("#cartCsvBtn")?.addEventListener("click", ()=>{
+  if(!CART_ROWS.length){ toast("Niente da esportare."); return; }
+  const head=["Numero","Nome","Contatto","Email","Data"];
+  const lines=CART_ROWS.map(r=>[r.numero,r.nome||"",r.contatto||"",r.email||"",r.created_at||""].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(","));
+  const blob=new Blob(["﻿"+[head.join(","),...lines].join("\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="cartellone-prenotazioni.csv"; a.click();
+});
 
 /* =====================================================================
    PRENOTAZIONI
