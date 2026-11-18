@@ -9,10 +9,7 @@ const VAPID_PUBLIC_KEY  = "BHzOjm_hlNTO6sVR4H1BA23hzVVYO_MeVwyXeQwQNNeHSsRe6idQ2
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-/* Cartellone della Fortuna — progetto Supabase separato (sola lettura dal super admin) */
-const CART_URL = "https://wpuyvrmqrbwauobdzzyy.supabase.co";
-const CART_KEY = "sb_publishable_E9ZMJr6i5UBLlWDv_0gXcw_bGgdYQLC";
-const sbCart = supabase.createClient(CART_URL, CART_KEY);
+/* Cartellone della Fortuna — stessa base dati del gestionale (tabella cartellone_prenotazioni) */
 let CART_ROWS = [];
 
 /* ---- stato ---- */
@@ -243,7 +240,7 @@ function switchTab(name){
    ===================================================================== */
 async function loadCartellone(){
   const list=$("#cartList"); list.innerHTML='<div class="loading">Carico…</div>';
-  const { data, error } = await sbCart.from("prenotazioni").select("*").order("numero");
+  const { data, error } = await sb.from("cartellone_prenotazioni").select("*").order("numero");
   if(error){ list.innerHTML='<div class="card" style="text-align:center">Errore nel caricamento del cartellone.</div>'; return; }
   CART_ROWS = data||[];
   $("#cartCount").textContent = CART_ROWS.length;
