@@ -380,3 +380,6 @@ input,select{font-family:inherit}
 .cart-tbl td{ padding:11px 12px; border-bottom:1px solid var(--line-soft); vertical-align:top; }
 .cart-tbl tr:last-child td{ border-bottom:none; }
 .cart-tbl a{ color:var(--spark); text-decoration:none; }
+.cart-del{ background:transparent; border:1px solid var(--line); border-radius:8px; padding:5px 9px; cursor:pointer; font-size:14px; line-height:1; color:var(--muted); transition:all .12s; }
+.cart-del:hover{ border-color:var(--stop); color:var(--stop); background:var(--stop-bg); }
+.cart-del:disabled{ opacity:.5; cursor:default; }
