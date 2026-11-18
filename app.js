@@ -266,21 +266,19 @@ $("#cartList")?.addEventListener("click", async e=>{
   toast(`Numero ${n} liberato.`);
   loadCartellone();
 });
-$("#cartDrawBtn")?.addEventListener("click", ()=>{
-  if(!CART_ROWS.length){ toast("Nessun numero da estrarre."); return; }
+function cartShowWinner(){
+  const n = parseInt($("#cartWinNum").value,10);
   const box=$("#cartWinner"); box.classList.remove("hide");
-  const w=CART_ROWS[Math.floor(Math.random()*CART_ROWS.length)];
-  let t=0; const spin=setInterval(()=>{
-    const r=CART_ROWS[Math.floor(Math.random()*CART_ROWS.length)];
-    box.innerHTML=`<div style="font-size:46px; font-weight:800; color:var(--spark); line-height:1">${r.numero}</div>`;
-    if(++t>=24){ clearInterval(spin);
-      const digits=(w.contatto||"").replace(/\D/g,""); const wa=digits.length>=9?(digits.startsWith('39')?digits:'39'+digits):"";
-      box.innerHTML=`<div style="font-size:54px; font-weight:800; color:var(--spark); line-height:1">🎉 ${w.numero}</div>
-        <div style="font-size:18px; font-weight:700; margin-top:6px">${esc(w.nome||"")}</div>
-        <div style="color:var(--muted); margin-top:2px">${wa?`<a href="https://wa.me/${wa}" target="_blank" rel="noopener">${esc(w.contatto)}</a>`:esc(w.contatto||"")}</div>`;
-    }
-  },70);
-});
+  if(!n || n<1 || n>90){ box.innerHTML='<div style="color:var(--muted)">Inserisci il numero estratto (1–90).</div>'; return; }
+  const w = CART_ROWS.find(r=>Number(r.numero)===n);
+  if(!w){ box.innerHTML=`<div style="font-size:46px; font-weight:800; color:var(--spark); line-height:1">${n}</div><div style="color:var(--muted); margin-top:4px">Numero non prenotato — nessun vincitore.</div>`; return; }
+  const digits=(w.contatto||"").replace(/\D/g,""); const wa=digits.length>=9?(digits.startsWith('39')?digits:'39'+digits):"";
+  box.innerHTML=`<div style="font-size:54px; font-weight:800; color:var(--spark); line-height:1">🎉 ${w.numero}</div>
+    <div style="font-size:18px; font-weight:700; margin-top:6px">${esc(w.nome||"")}</div>
+    <div style="color:var(--muted); margin-top:2px">${wa?`<a href="https://wa.me/${wa}" target="_blank" rel="noopener">${esc(w.contatto)}</a>`:esc(w.contatto||"")}${w.email?` · ${esc(w.email)}`:""}</div>`;
+}
+$("#cartWinBtn")?.addEventListener("click", cartShowWinner);
+$("#cartWinNum")?.addEventListener("keydown", e=>{ if(e.key==="Enter") cartShowWinner(); });
 $("#cartCsvBtn")?.addEventListener("click", ()=>{
   if(!CART_ROWS.length){ toast("Niente da esportare."); return; }
   const head=["Numero","Nome","Contatto","Email","Data"];
