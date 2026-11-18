@@ -244,12 +244,13 @@
     <div class="card" style="margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap">
       <div>
         <h3 style="margin:0 0 4px">Cartellone della Fortuna</h3>
-        <p style="margin:0">Prenotazioni del cartellone 90 numeri — <b id="cartCount">0</b>/90 prenotati.</p>
+        <p style="margin:0">Vince il numero del primo estratto sulla Ruota di Napoli del 24/12/2026. <b id="cartCount">0</b>/90 prenotati.</p>
       </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
         <button class="chip" id="cartRefreshBtn" style="align-self:center">↻ Aggiorna</button>
         <button class="chip" id="cartCsvBtn" style="align-self:center">⬇ CSV</button>
-        <button class="btn" id="cartDrawBtn" style="width:auto; padding:12px 18px; white-space:nowrap">🎰 Estrai vincitore</button>
+        <input id="cartWinNum" class="input" type="number" min="1" max="90" placeholder="N° estratto" style="width:120px" />
+        <button class="btn" id="cartWinBtn" style="width:auto; padding:12px 18px; white-space:nowrap">Mostra vincitore</button>
       </div>
     </div>
     <div id="cartWinner" class="card hide" style="text-align:center; margin-bottom:16px"></div>
@@ -469,7 +470,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 <script>
 (function(){
   var root=document.documentElement;
