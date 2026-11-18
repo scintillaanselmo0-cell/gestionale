@@ -383,3 +383,6 @@ input,select{font-family:inherit}
 .cart-del{ background:transparent; border:1px solid var(--line); border-radius:8px; padding:5px 9px; cursor:pointer; font-size:14px; line-height:1; color:var(--muted); transition:all .12s; }
 .cart-del:hover{ border-color:var(--stop); color:var(--stop); background:var(--stop-bg); }
 .cart-del:disabled{ opacity:.5; cursor:default; }
+.cart-badge{ display:inline-block; font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; white-space:nowrap; }
+.cart-badge.paid{ background:var(--ok-bg); color:var(--ok); border:1px solid var(--ok-line); }
+.cart-badge.pend{ background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn-line); }
