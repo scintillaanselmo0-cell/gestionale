@@ -58,6 +58,7 @@
     <button class="tab" data-tab="reminders" data-mod="promemoria" id="remTabBtn">Promemoria<span id="remBadge" class="tab-badge hide"></span></button>
     <button class="tab" data-tab="settings" data-mod="impostazioni">Impostazioni</button>
     <button class="tab hide" id="adminTabBtn" data-tab="admin">Admin</button>
+    <button class="tab hide" id="cartTabBtn" data-tab="cartellone">Cartellone</button>
   </nav>
 
   <!-- PRENOTAZIONI -->
@@ -237,6 +238,22 @@
     </div>
     <div id="catFilter" class="filters" style="margin-bottom:14px"></div>
     <div id="adminList"><div class="loading">Carico…</div></div>
+  </main>
+
+  <main id="tab-cartellone" class="wrap hide">
+    <div class="card" style="margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap">
+      <div>
+        <h3 style="margin:0 0 4px">Cartellone della Fortuna</h3>
+        <p style="margin:0">Prenotazioni del cartellone 90 numeri — <b id="cartCount">0</b>/90 prenotati.</p>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="chip" id="cartRefreshBtn" style="align-self:center">↻ Aggiorna</button>
+        <button class="chip" id="cartCsvBtn" style="align-self:center">⬇ CSV</button>
+        <button class="btn" id="cartDrawBtn" style="width:auto; padding:12px 18px; white-space:nowrap">🎰 Estrai vincitore</button>
+      </div>
+    </div>
+    <div id="cartWinner" class="card hide" style="text-align:center; margin-bottom:16px"></div>
+    <div id="cartList"><div class="loading">Carico…</div></div>
   </main>
 </div>
 

@@ -373,3 +373,10 @@ input,select{font-family:inherit}
   .ag-colhead{ font-size:13.5px }
   .ag-b-name{ font-size:13.5px }
 }
+
+/* Cartellone della Fortuna */
+.cart-tbl{ width:100%; border-collapse:collapse; font-size:14px; }
+.cart-tbl th{ text-align:left; padding:10px 12px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line); }
+.cart-tbl td{ padding:11px 12px; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+.cart-tbl tr:last-child td{ border-bottom:none; }
+.cart-tbl a{ color:var(--spark); text-decoration:none; }
