@@ -250,9 +250,10 @@ async function loadCartellone(){
     const digits=(r.contatto||"").replace(/\D/g,"");
     const wa = digits.length>=9 ? `<a href="https://wa.me/${digits.startsWith('39')?digits:'39'+digits}" target="_blank" rel="noopener">${esc(r.contatto)}</a>` : esc(r.contatto||"");
     const when = r.created_at ? new Date(r.created_at).toLocaleString("it-IT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
-    const st = (r.status||"paid")==="paid"
-      ? '<span class="cart-badge paid">Pagato</span>'
-      : '<span class="cart-badge pend">In attesa</span>';
+    const isCash = (r.stripe_session_id||"")==="CONTANTI";
+    const st = (r.status||"paid")!=="paid"
+      ? '<span class="cart-badge pend">In attesa</span>'
+      : (isCash ? '<span class="cart-badge paid">Contanti</span>' : '<span class="cart-badge paid">Pagato</span>');
     const imp = r.amount_cents ? (r.amount_cents/100).toLocaleString("it-IT",{style:"currency",currency:"EUR"}) : "";
     return `<tr><td style="font-weight:700; color:var(--spark)">${r.numero}</td><td>${esc(r.nome||"")}</td><td>${wa}${r.email?`<br><span style="color:var(--muted); font-size:12px">${esc(r.email)}</span>`:""}</td><td>${st}${imp?`<br><span style="color:var(--muted); font-size:12px">${imp}</span>`:""}</td><td style="color:var(--muted); white-space:nowrap">${when}</td><td style="text-align:right"><button class="cart-del" data-n="${r.numero}" title="Cancella e libera il numero">🗑</button></td></tr>`;
   }).join("");
@@ -290,6 +291,31 @@ $("#cartCsvBtn")?.addEventListener("click", ()=>{
   const lines=CART_ROWS.map(r=>[r.numero,r.nome||"",r.contatto||"",r.email||"",r.created_at||""].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(","));
   const blob=new Blob(["﻿"+[head.join(","),...lines].join("\n")],{type:"text/csv;charset=utf-8"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="cartellone-prenotazioni.csv"; a.click();
+});
+// Blocca un numero manualmente (pagamento in contanti) — risulta "Pagato", senza Stripe
+$("#cartBlkBtn")?.addEventListener("click", async ()=>{
+  const n = parseInt($("#cartBlkNum").value,10);
+  const nome = ($("#cartBlkNome").value||"").trim();
+  const tel = ($("#cartBlkTel").value||"").trim();
+  const msg = $("#cartBlkMsg");
+  const set=(t,ok)=>{ msg.textContent=t; msg.style.color = ok?"#49c17e":"#ff6b6b"; };
+  if(!n || n<1 || n>90){ set("Inserisci un numero da 1 a 90.",false); return; }
+  if(nome.length<2){ set("Inserisci il nome di chi prenota.",false); return; }
+  const btn=$("#cartBlkBtn"); btn.disabled=true; set("Blocco in corso…",true);
+  // libera eventuali hold scaduti su questo numero, poi inserisci
+  await sb.from("cartellone_prenotazioni").delete().eq("numero",n).eq("status","pending").lt("hold_expires_at", new Date().toISOString());
+  const { error } = await sb.from("cartellone_prenotazioni").insert({
+    numero:n, nome, contatto: tel||null, email:null,
+    status:"paid", amount_cents:1000, stripe_session_id:"CONTANTI", hold_expires_at:null
+  });
+  btn.disabled=false;
+  if(error){
+    set(/duplicate|unique|exist|conflict|23505/i.test((error.message||"")+(error.code||"")) ? `Il numero ${n} è già occupato.` : "Impossibile bloccare il numero (riprova).", false);
+    return;
+  }
+  set(`Numero ${n} bloccato per ${nome}. ✅`, true);
+  $("#cartBlkNum").value=""; $("#cartBlkNome").value=""; $("#cartBlkTel").value="";
+  loadCartellone();
 });
 
 /* =====================================================================
