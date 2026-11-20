@@ -305,7 +305,7 @@ $("#cartBlkBtn")?.addEventListener("click", async ()=>{
   // libera eventuali hold scaduti su questo numero, poi inserisci
   await sb.from("cartellone_prenotazioni").delete().eq("numero",n).eq("status","pending").lt("hold_expires_at", new Date().toISOString());
   const { error } = await sb.from("cartellone_prenotazioni").insert({
-    numero:n, nome, contatto: tel||null, email:null,
+    numero:n, nome, contatto: tel, email:null,
     status:"paid", amount_cents:1000, stripe_session_id:"CONTANTI", hold_expires_at:null
   });
   btn.disabled=false;
