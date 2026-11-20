@@ -253,6 +253,19 @@
         <button class="btn" id="cartWinBtn" style="width:auto; padding:12px 18px; white-space:nowrap">Mostra vincitore</button>
       </div>
     </div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px">
+        <span style="font-size:18px">💵</span><b>Blocca un numero (pagamento in contanti)</b>
+      </div>
+      <p style="margin:0 0 12px; color:var(--muted); font-size:13px">Riserva un numero per chi ti paga a mano: risulterà “Pagato” sul cartellone, senza passare da Stripe.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+        <input id="cartBlkNum" class="input" type="number" min="1" max="90" placeholder="N°" style="width:90px" />
+        <input id="cartBlkNome" class="input" type="text" placeholder="Nome e cognome" style="flex:1; min-width:160px" />
+        <input id="cartBlkTel" class="input" type="text" placeholder="Telefono (facolt.)" style="width:170px" />
+        <button class="btn" id="cartBlkBtn" style="width:auto; padding:12px 18px; white-space:nowrap">Blocca numero</button>
+      </div>
+      <div id="cartBlkMsg" style="margin-top:8px; font-size:13px"></div>
+    </div>
     <div id="cartWinner" class="card hide" style="text-align:center; margin-bottom:16px"></div>
     <div id="cartList"><div class="loading">Carico…</div></div>
   </main>
